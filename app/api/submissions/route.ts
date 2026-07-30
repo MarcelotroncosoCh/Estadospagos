@@ -32,6 +32,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO payment_processes (id, name, deadline, is_open)
+    VALUES ('2026-07-2', 'Proceso 2 · Julio 2026', '2026-07-31T17:00:00-04:00', 1)
+  `).run();
+  const activeProcess = await env.DB.prepare(`
+    SELECT deadline, is_open AS isOpen FROM payment_processes WHERE id = '2026-07-2'
+  `).first<{ deadline: string; isOpen: number }>();
+  if (!activeProcess || !activeProcess.isOpen || Date.now() >= Date.parse(activeProcess.deadline)) {
+    return Response.json({
+      error: "Fuera de proceso de pago. La recepción de facturas se encuentra cerrada; ingresa el documento en el próximo proceso.",
+      code: "PROCESS_CLOSED",
+    }, { status: 409 });
+  }
+
   const form = await request.formData();
   const requester = text(form, "requester");
   const department = text(form, "department");
@@ -96,7 +110,17 @@ export async function POST(request: Request) {
       catalogStatement("motive", motive, null),
     ];
     await env.DB.batch(statements);
-    return Response.json({ submission: { id, status: "Recibida" } }, { status: 201 });
+    return Response.json({
+      submission: {
+        id,
+        status: "Recibida",
+        documents: documentRows.map((item) => ({
+          id: item.id,
+          fileName: item.file.name,
+          size: item.file.size,
+        })),
+      },
+    }, { status: 201 });
   } catch (error) {
     await Promise.all(uploadedKeys.map((key) => env.FILES.delete(key)));
     const message = error instanceof Error ? error.message : "No fue posible guardar la solicitud.";

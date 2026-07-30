@@ -58,6 +58,7 @@ const projectsByType: Record<string, string[]> = {
 };
 
 type Status = "Recibida" | "En proceso" | "Pendiente" | "Pagada";
+type ProcessInfo = { id: string; name: string; deadline: string; isOpen: boolean; accepting: boolean };
 type Payment = {
   id: string;
   requester: string;
@@ -85,6 +86,12 @@ function FieldHint({ value, options, noun }: { value: string; options: string[];
   return <span className="new-hint"><span>+</span> Se agregará “{value}” como {noun} nuevo</span>;
 }
 
+function toDateTimeLocal(value: string) {
+  const date = new Date(value);
+  const part = (number: number) => String(number).padStart(2, "0");
+  return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+
 export default function Home() {
   const [view, setView] = useState<"form" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
@@ -101,7 +108,15 @@ export default function Home() {
   const [payments, setPayments] = useState(seedPayments);
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [search, setSearch] = useState("");
-  const [isOpen, setIsOpen] = useState(true);
+  const [processInfo, setProcessInfo] = useState<ProcessInfo>({
+    id: "2026-07-2",
+    name: "Proceso 2 · Julio 2026",
+    deadline: "2026-07-31T17:00:00-04:00",
+    isOpen: true,
+    accepting: true,
+  });
+  const [deadlineDraft, setDeadlineDraft] = useState("2026-07-31T17:00");
+  const [savingProcess, setSavingProcess] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState("Ingeniería");
   const [repositoryNotice, setRepositoryNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -112,16 +127,20 @@ export default function Home() {
   useEffect(() => {
     async function hydrate() {
       try {
-        const [catalogResponse, submissionResponse] = await Promise.all([
+        const [catalogResponse, submissionResponse, processResponse] = await Promise.all([
           fetch("/api/catalogs", { cache: "no-store" }),
           fetch("/api/submissions", { cache: "no-store" }),
+          fetch("/api/process", { cache: "no-store" }),
         ]);
-        if (!catalogResponse.ok || !submissionResponse.ok) throw new Error("Datos no disponibles");
+        if (!catalogResponse.ok || !submissionResponse.ok || !processResponse.ok) throw new Error("Datos no disponibles");
         const catalogData = await catalogResponse.json() as { entries: Array<{ kind: string; name: string; projectType: string | null }> };
         const submissionData = await submissionResponse.json() as {
           submissions: Array<Payment & { createdAt: string }>;
           documents: Array<{ id: string; submissionId: string; fileName: string; size: number }>;
         };
+        const processData = await processResponse.json() as { process: ProcessInfo };
+        setProcessInfo(processData.process);
+        setDeadlineDraft(toDateTimeLocal(processData.process.deadline));
         const providerEntries = catalogData.entries.filter((entry) => entry.kind === "provider").map((entry) => entry.name);
         const motiveEntries = catalogData.entries.filter((entry) => entry.kind === "motive").map((entry) => entry.name);
         setProviderOptions(Array.from(new Set([...baseProviders, ...providerEntries])));
@@ -158,6 +177,8 @@ export default function Home() {
   }), [payments, search, statusFilter]);
 
   const counts = (status: Status) => payments.filter((payment) => payment.status === status).length;
+  const deadlineExpired = Date.now() >= Date.parse(processInfo.deadline);
+  const acceptingProcess = processInfo.isOpen && !deadlineExpired;
   const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment);
   const repositoryStats = departments.map((name) => ({
     name,
@@ -174,6 +195,25 @@ export default function Home() {
       if (!response.ok) return;
     }
     setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, status } : payment));
+  }
+
+  async function updateProcess(changes: { isOpen?: boolean; deadline?: string }) {
+    setSavingProcess(true);
+    try {
+      const response = await fetch("/api/process", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(changes),
+      });
+      const result = await response.json() as { process?: ProcessInfo; error?: string };
+      if (!response.ok || !result.process) throw new Error(result.error ?? "No fue posible actualizar el proceso.");
+      setProcessInfo(result.process);
+      setDeadlineDraft(toDateTimeLocal(result.process.deadline));
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "No fue posible actualizar el proceso.");
+    } finally {
+      setSavingProcess(false);
+    }
   }
 
   async function submitForm(event: React.FormEvent<HTMLFormElement>) {
@@ -196,7 +236,10 @@ export default function Home() {
       formData.set("comment", commentField);
       files.forEach((file) => formData.append("files", file));
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
-      const result = await response.json() as { submission?: { id: string; status: Status }; error?: string };
+      const result = await response.json() as {
+        submission?: { id: string; status: Status; documents: Array<{ id: string; fileName: string; size: number }> };
+        error?: string;
+      };
       if (!response.ok || !result.submission) throw new Error(result.error ?? "No fue posible guardar la solicitud.");
       const created: Payment = {
         id: result.submission.id,
@@ -209,7 +252,7 @@ export default function Home() {
         files: files.length,
         status: result.submission.status,
         date: "Ahora",
-        documents: [],
+        documents: result.submission.documents,
       };
       setPayments((current) => [created, ...current]);
       setProviderOptions((current) => Array.from(new Set([...current, cleanProvider])));
@@ -261,12 +304,14 @@ export default function Home() {
               <p>Completa los datos y adjunta los documentos correspondientes al proceso actual.</p>
             </div>
             <div className="deadline">
-              <span className="calendar-icon">31</span>
-              <div><small>Fecha de cierre</small><strong>Viernes 31 de julio · 17:00</strong></div>
+              <span className="calendar-icon">{new Date(processInfo.deadline).getDate()}</span>
+              <div><small>Fecha de cierre</small><strong>{new Date(processInfo.deadline).toLocaleString("es-CL", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</strong></div>
             </div>
           </div>
 
-          <div className="notice"><span>i</span><p><strong>Proceso 2 · Julio 2026</strong> Recibiremos documentos hasta la fecha de cierre indicada.</p></div>
+          {acceptingProcess
+            ? <div className="notice"><span>i</span><p><strong>{processInfo.name}</strong> Recibiremos documentos hasta la fecha de cierre indicada.</p></div>
+            : <div className="notice process-closed-notice"><span>!</span><p><strong>Fuera de proceso de pago</strong> La recepción está cerrada. Esta factura deberá ingresarse en el próximo proceso.</p></div>}
 
           <form className="form-card" onSubmit={submitForm}>
             <div className="section-title"><span>01</span><div><h2>Datos generales</h2><p>Información para identificar y clasificar la solicitud.</p></div></div>
@@ -300,7 +345,7 @@ export default function Home() {
             </label>
 
             {submitError && <div className="form-error"><span>!</span>{submitError}</div>}
-            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary" disabled={submitting}>{submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div>
+            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary" disabled={submitting || !acceptingProcess}>{!acceptingProcess ? "Proceso cerrado" : submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div>
           </form>
 
           {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => setView("admin")}>Ver en el panel</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
@@ -308,8 +353,14 @@ export default function Home() {
       ) : view === "admin" ? (
         <section className="page-shell admin-page">
           <div className="admin-heading">
-            <div><span className="eyebrow">Administración</span><h1>Proceso 2 · Julio 2026</h1><p>Revisa y actualiza el estado de las facturas recibidas.</p></div>
-            <div className="process-control"><div><span className={`dot ${isOpen ? "" : "closed"}`} /><small>Recepción</small><strong>{isOpen ? "Abierta" : "Cerrada"}</strong></div><button className={isOpen ? "close-process" : "open-process"} onClick={() => setIsOpen(!isOpen)}>{isOpen ? "Cerrar proceso" : "Reabrir proceso"}</button></div>
+            <div><span className="eyebrow">Administración</span><h1>{processInfo.name}</h1><p>Revisa y actualiza el estado de las facturas recibidas.</p></div>
+            <div className="process-control"><div><span className={`dot ${acceptingProcess ? "" : "closed"}`} /><small>Recepción</small><strong>{acceptingProcess ? "Abierta" : "Cerrada"}</strong></div><button disabled={savingProcess || (deadlineExpired && processInfo.isOpen)} className={acceptingProcess ? "close-process" : "open-process"} onClick={() => void updateProcess({ isOpen: !acceptingProcess })}>{acceptingProcess ? "Cerrar proceso" : deadlineExpired && processInfo.isOpen ? "Cambia la fecha" : "Reabrir proceso"}</button></div>
+          </div>
+
+          <div className="deadline-editor">
+            <div><span className="calendar-icon">{new Date(processInfo.deadline).getDate()}</span><div><strong>Fecha y hora de cierre</strong><small>Después de esta fecha el formulario dejará de aceptar facturas.</small></div></div>
+            <label>Fecha de cierre<input type="datetime-local" value={deadlineDraft} onChange={(event) => setDeadlineDraft(event.target.value)} /></label>
+            <button disabled={savingProcess || !deadlineDraft} onClick={() => void updateProcess({ deadline: new Date(deadlineDraft).toISOString() })}>{savingProcess ? "Guardando..." : "Guardar fecha"}</button>
           </div>
 
           <div className="stats-grid">
@@ -345,7 +396,7 @@ export default function Home() {
         <section className="page-shell repository-page">
           <div className="admin-heading">
             <div><span className="eyebrow">Documentos organizados</span><h1>Repositorio de facturas</h1><p>Descarga juntas todas las facturas de un departamento para cargarlas en tu sistema.</p></div>
-            <div className="repository-summary"><span>▣</span><div><small>Proceso actual</small><strong>Proceso 2 · Julio 2026</strong></div></div>
+            <div className="repository-summary"><span>▣</span><div><small>Proceso actual</small><strong>{processInfo.name}</strong></div></div>
           </div>
 
           <div className="repository-explainer"><span>i</span><p>Cada factura se almacena automáticamente en la carpeta de su departamento. Al cerrar el proceso podrás descargar cada carpeta en formato ZIP.</p></div>

@@ -1,6 +1,14 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
+export const paymentProcesses = sqliteTable("payment_processes", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  deadline: text("deadline").notNull(),
+  isOpen: integer("is_open", { mode: "boolean" }).notNull().default(true),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const catalogEntries = sqliteTable("catalog_entries", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   kind: text("kind", { enum: ["provider", "project", "motive"] }).notNull(),

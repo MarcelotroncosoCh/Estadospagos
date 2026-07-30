@@ -45,6 +45,9 @@ h1 { font-size: clamp(27px, 4vw, 38px); line-height: 1.12; letter-spacing: -.035
 .notice span { width: 22px; height: 22px; border-radius: 50%; background: var(--brand); color: white; display: grid; place-items: center; font-family: Georgia, serif; font-weight: bold; }
 .notice p { margin: 0; }
 .notice strong { color: var(--brand-dark); margin-right: 8px; }
+.process-closed-notice { border-color: #e8caca; background: #fff5f5; color: #8b4b4b; }
+.process-closed-notice span { background: #a94d4d; font-family: inherit; }
+.process-closed-notice strong { color: #913f3f; }
 
 .form-card, .table-card { background: white; border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 26px rgba(31,63,69,.05); }
 .form-card { padding: 30px 34px; }
@@ -99,6 +102,16 @@ h1 { font-size: clamp(27px, 4vw, 38px); line-height: 1.12; letter-spacing: -.035
 .process-control strong { font-size: 12px; }
 .close-process, .open-process { border: 1px solid #e2c7c7; background: #fff7f7; color: #9a4545; border-radius: 8px; font-size: 10px; padding: 9px 11px; cursor: pointer; font-weight: 700; }
 .open-process { border-color: #bcded6; color: var(--brand); background: #f0faf7; }
+.process-control button:disabled { opacity: .58; cursor: not-allowed; }
+.deadline-editor { display: grid; grid-template-columns: minmax(250px, 1fr) minmax(220px, 310px) auto; align-items: end; gap: 16px; padding: 16px 18px; border: 1px solid var(--line); background: white; border-radius: 12px; margin-bottom: 18px; }
+.deadline-editor > div { display: flex; align-items: center; gap: 11px; align-self: center; }
+.deadline-editor strong, .deadline-editor small { display: block; }
+.deadline-editor strong { font-size: 11px; }
+.deadline-editor small { color: #879499; font-size: 9px; margin-top: 3px; }
+.deadline-editor label { color: #5c6c71; font-size: 9px; font-weight: 700; }
+.deadline-editor input { display: block; width: 100%; height: 38px; margin-top: 6px; padding: 0 10px; border: 1px solid #d5dfe0; border-radius: 8px; color: var(--ink); font-size: 10px; }
+.deadline-editor > button { height: 38px; border: 1px solid #b9d7d4; border-radius: 8px; background: #edf8f6; color: var(--brand); padding: 0 14px; font-size: 10px; font-weight: 750; cursor: pointer; }
+.deadline-editor > button:disabled { opacity: .55; cursor: wait; }
 .stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
 .stats-grid > button { border: 1px solid var(--line); border-radius: 12px; background: white; padding: 16px; display: flex; align-items: center; gap: 11px; text-align: left; cursor: pointer; box-shadow: 0 3px 14px rgba(31,63,69,.03); }
 .stats-grid > button.selected { border-color: #6caaa4; box-shadow: 0 0 0 2px #dff0ee; }
@@ -202,6 +215,8 @@ td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .stats-grid > button:first-child { grid-column: 1 / -1; }
   .folder-grid { grid-template-columns: repeat(2, 1fr); }
+  .deadline-editor { grid-template-columns: 1fr 1fr; }
+  .deadline-editor > div { grid-column: 1 / -1; }
 }
 
 @media (max-width: 580px) {
@@ -223,6 +238,9 @@ td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
   .folder-grid { grid-template-columns: 1fr; }
   .repository-toolbar { align-items: stretch; flex-direction: column; }
   .download-folder { width: 100%; }
+  .deadline-editor { grid-template-columns: 1fr; }
+  .deadline-editor > div { grid-column: auto; }
+  .deadline-editor > button { width: 100%; }
   .file-row { grid-template-columns: 38px minmax(150px, 1fr) 30px; }
   .file-row .badge { display: none; }
 }
