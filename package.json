@@ -10,7 +10,7 @@
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "deploy:prepare": "node scripts/prepare-cloudflare-deploy.mjs",
-    "deploy:cloudflare": "npm run build && npm run deploy:prepare && wrangler d1 migrations apply estadospagos-db --remote --config wrangler.resources.jsonc && wrangler deploy --config dist/server/wrangler.cloudflare.json",
+    "deploy:cloudflare": "npm run build && npm run deploy:prepare && wrangler d1 migrations apply estadospagos-db --remote --config wrangler.resources.jsonc && wrangler deploy --cwd dist/server --config wrangler.cloudflare.json --no-bundle --x-autoconfig=false",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
