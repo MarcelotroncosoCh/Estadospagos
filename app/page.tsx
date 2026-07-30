@@ -69,6 +69,7 @@ type Payment = {
   files: number;
   status: Status;
   date: string;
+  documents?: Array<{ id: string; fileName: string; size: number }>;
 };
 
 const seedPayments: Payment[] = [
@@ -103,17 +104,48 @@ export default function Home() {
   const [isOpen, setIsOpen] = useState(true);
   const [selectedDepartment, setSelectedDepartment] = useState("Ingeniería");
   const [repositoryNotice, setRepositoryNotice] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [sentId, setSentId] = useState("");
+  const [dataMode, setDataMode] = useState<"loading" | "live" | "demo">("loading");
 
   useEffect(() => {
-    const storedProviders = JSON.parse(localStorage.getItem("portal-providers") ?? "[]") as string[];
-    const storedMotives = JSON.parse(localStorage.getItem("portal-motives") ?? "[]") as string[];
-    const storedProjects = JSON.parse(localStorage.getItem("portal-projects") ?? "{}") as Record<string, string[]>;
-    setProviderOptions(Array.from(new Set([...baseProviders, ...storedProviders])));
-    setMotiveOptions(Array.from(new Set([...motives, ...storedMotives])));
-    setProjectOptions(Object.fromEntries(Object.entries(projectsByType).map(([type, items]) => [
-      type,
-      Array.from(new Set([...items, ...(storedProjects[type] ?? [])])),
-    ])));
+    async function hydrate() {
+      try {
+        const [catalogResponse, submissionResponse] = await Promise.all([
+          fetch("/api/catalogs", { cache: "no-store" }),
+          fetch("/api/submissions", { cache: "no-store" }),
+        ]);
+        if (!catalogResponse.ok || !submissionResponse.ok) throw new Error("Datos no disponibles");
+        const catalogData = await catalogResponse.json() as { entries: Array<{ kind: string; name: string; projectType: string | null }> };
+        const submissionData = await submissionResponse.json() as {
+          submissions: Array<Payment & { createdAt: string }>;
+          documents: Array<{ id: string; submissionId: string; fileName: string; size: number }>;
+        };
+        const providerEntries = catalogData.entries.filter((entry) => entry.kind === "provider").map((entry) => entry.name);
+        const motiveEntries = catalogData.entries.filter((entry) => entry.kind === "motive").map((entry) => entry.name);
+        setProviderOptions(Array.from(new Set([...baseProviders, ...providerEntries])));
+        setMotiveOptions(Array.from(new Set([...motives, ...motiveEntries])));
+        setProjectOptions(Object.fromEntries(Object.entries(projectsByType).map(([type, items]) => [
+          type,
+          Array.from(new Set([
+            ...items,
+            ...catalogData.entries.filter((entry) => entry.kind === "project" && entry.projectType === type).map((entry) => entry.name),
+          ])),
+        ])));
+        const livePayments = submissionData.submissions.map((item) => ({
+          ...item,
+          files: Number(item.files),
+          date: new Date(item.createdAt).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }),
+          documents: submissionData.documents.filter((document) => document.submissionId === item.id),
+        }));
+        setPayments(livePayments);
+        setDataMode("live");
+      } catch {
+        setDataMode("demo");
+      }
+    }
+    void hydrate();
   }, []);
 
   const currentProjects = projectOptions[projectType] ?? [];
@@ -132,45 +164,65 @@ export default function Home() {
     payments: payments.filter((payment) => payment.department === name),
   }));
 
-  function updateStatus(id: string, status: Status) {
+  async function updateStatus(id: string, status: Status) {
+    if (dataMode === "live") {
+      const response = await fetch(`/api/submissions/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) return;
+    }
     setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, status } : payment));
   }
 
-  function submitForm(event: React.FormEvent<HTMLFormElement>) {
+  async function submitForm(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setSubmitError("");
+    setSubmitting(true);
     const cleanProvider = provider.trim();
     const cleanProject = project.trim();
     const cleanMotive = motive.trim();
-
-    if (cleanProvider && !providerOptions.some((item) => item.toLowerCase() === cleanProvider.toLowerCase())) {
-      const customProviders = JSON.parse(localStorage.getItem("portal-providers") ?? "[]") as string[];
-      localStorage.setItem("portal-providers", JSON.stringify(Array.from(new Set([...customProviders, cleanProvider]))));
-      setProviderOptions((current) => [...current, cleanProvider]);
+    try {
+      if (!files.length) throw new Error("Debes adjuntar al menos una factura.");
+      const formData = new FormData();
+      formData.set("requester", requester);
+      formData.set("department", department);
+      formData.set("provider", cleanProvider);
+      formData.set("projectType", projectType);
+      formData.set("project", cleanProject);
+      formData.set("motive", cleanMotive);
+      const commentField = (event.currentTarget.elements.namedItem("comment") as HTMLTextAreaElement | null)?.value ?? "";
+      formData.set("comment", commentField);
+      files.forEach((file) => formData.append("files", file));
+      const response = await fetch("/api/submissions", { method: "POST", body: formData });
+      const result = await response.json() as { submission?: { id: string; status: Status }; error?: string };
+      if (!response.ok || !result.submission) throw new Error(result.error ?? "No fue posible guardar la solicitud.");
+      const created: Payment = {
+        id: result.submission.id,
+        requester,
+        department,
+        provider: cleanProvider,
+        project: cleanProject,
+        type: projectType,
+        motive: cleanMotive,
+        files: files.length,
+        status: result.submission.status,
+        date: "Ahora",
+        documents: [],
+      };
+      setPayments((current) => [created, ...current]);
+      setProviderOptions((current) => Array.from(new Set([...current, cleanProvider])));
+      setMotiveOptions((current) => Array.from(new Set([...current, cleanMotive])));
+      setProjectOptions((current) => ({ ...current, [projectType]: Array.from(new Set([...(current[projectType] ?? []), cleanProject])) }));
+      setSentId(result.submission.id);
+      setDataMode("live");
+      setSent(true);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "No fue posible guardar la solicitud.");
+    } finally {
+      setSubmitting(false);
     }
-    if (cleanMotive && !motiveOptions.some((item) => item.toLowerCase() === cleanMotive.toLowerCase())) {
-      const customMotives = JSON.parse(localStorage.getItem("portal-motives") ?? "[]") as string[];
-      localStorage.setItem("portal-motives", JSON.stringify(Array.from(new Set([...customMotives, cleanMotive]))));
-      setMotiveOptions((current) => [...current, cleanMotive]);
-    }
-    if (cleanProject && !currentProjects.some((item) => item.toLowerCase() === cleanProject.toLowerCase())) {
-      const customProjects = JSON.parse(localStorage.getItem("portal-projects") ?? "{}") as Record<string, string[]>;
-      customProjects[projectType] = Array.from(new Set([...(customProjects[projectType] ?? []), cleanProject]));
-      localStorage.setItem("portal-projects", JSON.stringify(customProjects));
-      setProjectOptions((current) => ({ ...current, [projectType]: [...(current[projectType] ?? []), cleanProject] }));
-    }
-    setPayments((current) => [{
-      id: `PG-${String(82 + Math.max(0, current.length - seedPayments.length)).padStart(3, "0")}`,
-      requester,
-      department,
-      provider: cleanProvider,
-      project: cleanProject,
-      type: projectType,
-      motive: cleanMotive,
-      files: Math.max(files.length, 1),
-      status: "Recibida",
-      date: "Ahora",
-    }, ...current]);
-    setSent(true);
   }
 
   function resetForm() {
@@ -181,6 +233,8 @@ export default function Home() {
     setDepartment("");
     setFiles([]);
     setSent(false);
+    setSentId("");
+    setSubmitError("");
   }
 
   return (
@@ -232,7 +286,7 @@ export default function Home() {
             <div className="form-grid">
               <label className="wide">Proyecto <b>*</b><input required list="projects" value={project} onChange={(event) => setProject(event.target.value)} placeholder={`Buscar proyecto de ${projectType} o escribir uno nuevo`} /><datalist id="projects">{currentProjects.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={project} options={currentProjects} noun="proyecto" /></label>
               <label className="wide">Motivo <b>*</b><input required list="motives" value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Buscar o escribir motivo nuevo" /><datalist id="motives">{motiveOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={motive} options={motiveOptions} noun="motivo" /></label>
-              <label className="wide">Comentario <span className="optional">Opcional</span><textarea rows={3} placeholder="Agrega información útil para revisar el pago" /></label>
+              <label className="wide">Comentario <span className="optional">Opcional</span><textarea name="comment" rows={3} placeholder="Agrega información útil para revisar el pago" /></label>
             </div>
 
             <div className="divider" />
@@ -245,10 +299,11 @@ export default function Home() {
               <small>PDF, Excel, Word o imagen · Máximo 15 MB por archivo</small>
             </label>
 
-            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary">Enviar facturas <span>→</span></button></div>
+            {submitError && <div className="form-error"><span>!</span>{submitError}</div>}
+            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary" disabled={submitting}>{submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div>
           </form>
 
-          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>PG-082</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => setView("admin")}>Ver en el panel</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
+          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => setView("admin")}>Ver en el panel</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
         </section>
       ) : view === "admin" ? (
         <section className="page-shell admin-page">
@@ -309,21 +364,35 @@ export default function Home() {
           <div className="repository-card">
             <div className="repository-toolbar">
               <div><span className="mini-folder">▰</span><div><h2>{selectedDepartment}</h2><p>{departmentPayments.length} solicitudes en este proceso</p></div></div>
-              <button className="primary download-folder" onClick={() => { setRepositoryNotice(true); window.setTimeout(() => setRepositoryNotice(false), 4200); }}>↓ Descargar carpeta (.zip)</button>
+              <button className="primary download-folder" onClick={() => {
+                if (dataMode === "live") {
+                  window.location.href = `/api/departments/${encodeURIComponent(selectedDepartment)}/download`;
+                } else {
+                  setRepositoryNotice(true);
+                  window.setTimeout(() => setRepositoryNotice(false), 4200);
+                }
+              }}>↓ Descargar carpeta (.zip)</button>
             </div>
             {departmentPayments.length ? <div className="file-list">
-              {departmentPayments.flatMap((payment) => Array.from({ length: payment.files }, (_, index) => (
-                <div className="file-row" key={`${payment.id}-${index}`}>
-                  <span className="pdf-icon">PDF</span>
-                  <div><strong>{payment.provider} · {payment.project}</strong><small>{payment.id} · Factura {index + 1} · {payment.requester}</small></div>
-                  <span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span>
-                  <button aria-label={`Descargar factura ${index + 1} de ${payment.provider}`}>↓</button>
-                </div>
-              )))}
+              {departmentPayments.flatMap((payment) => {
+                const documentItems = payment.documents?.length
+                  ? payment.documents
+                  : Array.from({ length: payment.files }, (_, index) => ({ id: "", fileName: `Factura ${index + 1}`, size: 0 }));
+                return documentItems.map((document, index) => (
+                  <div className="file-row" key={`${payment.id}-${document.id || index}`}>
+                    <span className="pdf-icon">{document.fileName.split(".").pop()?.slice(0, 4).toUpperCase() || "DOC"}</span>
+                    <div><strong>{document.fileName}</strong><small>{payment.id} · {payment.provider} · {payment.project}</small></div>
+                    <span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span>
+                    {document.id
+                      ? <a href={`/api/files/${encodeURIComponent(document.id)}`} aria-label={`Descargar ${document.fileName}`}>↓</a>
+                      : <button aria-label={`Descargar factura ${index + 1} de ${payment.provider}`}>↓</button>}
+                  </div>
+                ));
+              })}
             </div> : <div className="empty-folder"><span>▱</span><h3>Carpeta vacía</h3><p>Todavía no se han recibido facturas para {selectedDepartment}.</p></div>}
           </div>
 
-          {repositoryNotice && <div className="repository-toast"><span>✓</span><div><strong>Descarga agrupada preparada</strong><p>En la versión definitiva se generará un ZIP con los archivos reales de {selectedDepartment}.</p></div></div>}
+          {repositoryNotice && <div className="repository-toast"><span>i</span><div><strong>Vista de demostración</strong><p>La descarga real estará disponible cuando el almacenamiento compartido termine de activarse.</p></div></div>}
         </section>
       )}
     </main>
