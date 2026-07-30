@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const departments = [
   "Arquitectura",
@@ -11,7 +11,7 @@ const departments = [
   "Topografía",
 ];
 
-const providers = [
+const baseProviders = [
   "Alfonso Larraín y Asociados", "Apica", "Arquitectura AHA",
   "Arquitectura y Eficiencia Energética CEVCHILE", "Axisterra",
   "Carlos Gonzalez", "Christian Agurto", "Christian Kramm", "CODAM",
@@ -85,8 +85,13 @@ function FieldHint({ value, options, noun }: { value: string; options: string[];
 }
 
 export default function Home() {
-  const [view, setView] = useState<"form" | "admin">("form");
+  const [view, setView] = useState<"form" | "admin" | "repository">("form");
+  const [requester, setRequester] = useState("");
+  const [department, setDepartment] = useState("");
   const [projectType, setProjectType] = useState("DS19");
+  const [providerOptions, setProviderOptions] = useState(baseProviders);
+  const [motiveOptions, setMotiveOptions] = useState(motives);
+  const [projectOptions, setProjectOptions] = useState(projectsByType);
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [motive, setMotive] = useState("");
@@ -96,8 +101,22 @@ export default function Home() {
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [search, setSearch] = useState("");
   const [isOpen, setIsOpen] = useState(true);
+  const [selectedDepartment, setSelectedDepartment] = useState("Ingeniería");
+  const [repositoryNotice, setRepositoryNotice] = useState(false);
 
-  const currentProjects = projectsByType[projectType] ?? [];
+  useEffect(() => {
+    const storedProviders = JSON.parse(localStorage.getItem("portal-providers") ?? "[]") as string[];
+    const storedMotives = JSON.parse(localStorage.getItem("portal-motives") ?? "[]") as string[];
+    const storedProjects = JSON.parse(localStorage.getItem("portal-projects") ?? "{}") as Record<string, string[]>;
+    setProviderOptions(Array.from(new Set([...baseProviders, ...storedProviders])));
+    setMotiveOptions(Array.from(new Set([...motives, ...storedMotives])));
+    setProjectOptions(Object.fromEntries(Object.entries(projectsByType).map(([type, items]) => [
+      type,
+      Array.from(new Set([...items, ...(storedProjects[type] ?? [])])),
+    ])));
+  }, []);
+
+  const currentProjects = projectOptions[projectType] ?? [];
   const filteredPayments = useMemo(() => payments.filter((payment) => {
     const matchesStatus = statusFilter === "Todos" || payment.status === statusFilter;
     const term = search.toLowerCase();
@@ -107,6 +126,11 @@ export default function Home() {
   }), [payments, search, statusFilter]);
 
   const counts = (status: Status) => payments.filter((payment) => payment.status === status).length;
+  const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment);
+  const repositoryStats = departments.map((name) => ({
+    name,
+    payments: payments.filter((payment) => payment.department === name),
+  }));
 
   function updateStatus(id: string, status: Status) {
     setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, status } : payment));
@@ -114,6 +138,38 @@ export default function Home() {
 
   function submitForm(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const cleanProvider = provider.trim();
+    const cleanProject = project.trim();
+    const cleanMotive = motive.trim();
+
+    if (cleanProvider && !providerOptions.some((item) => item.toLowerCase() === cleanProvider.toLowerCase())) {
+      const customProviders = JSON.parse(localStorage.getItem("portal-providers") ?? "[]") as string[];
+      localStorage.setItem("portal-providers", JSON.stringify(Array.from(new Set([...customProviders, cleanProvider]))));
+      setProviderOptions((current) => [...current, cleanProvider]);
+    }
+    if (cleanMotive && !motiveOptions.some((item) => item.toLowerCase() === cleanMotive.toLowerCase())) {
+      const customMotives = JSON.parse(localStorage.getItem("portal-motives") ?? "[]") as string[];
+      localStorage.setItem("portal-motives", JSON.stringify(Array.from(new Set([...customMotives, cleanMotive]))));
+      setMotiveOptions((current) => [...current, cleanMotive]);
+    }
+    if (cleanProject && !currentProjects.some((item) => item.toLowerCase() === cleanProject.toLowerCase())) {
+      const customProjects = JSON.parse(localStorage.getItem("portal-projects") ?? "{}") as Record<string, string[]>;
+      customProjects[projectType] = Array.from(new Set([...(customProjects[projectType] ?? []), cleanProject]));
+      localStorage.setItem("portal-projects", JSON.stringify(customProjects));
+      setProjectOptions((current) => ({ ...current, [projectType]: [...(current[projectType] ?? []), cleanProject] }));
+    }
+    setPayments((current) => [{
+      id: `PG-${String(82 + Math.max(0, current.length - seedPayments.length)).padStart(3, "0")}`,
+      requester,
+      department,
+      provider: cleanProvider,
+      project: cleanProject,
+      type: projectType,
+      motive: cleanMotive,
+      files: Math.max(files.length, 1),
+      status: "Recibida",
+      date: "Ahora",
+    }, ...current]);
     setSent(true);
   }
 
@@ -121,6 +177,8 @@ export default function Home() {
     setProvider("");
     setProject("");
     setMotive("");
+    setRequester("");
+    setDepartment("");
     setFiles([]);
     setSent(false);
   }
@@ -135,6 +193,7 @@ export default function Home() {
         <nav aria-label="Navegación principal">
           <button className={view === "form" ? "active" : ""} onClick={() => setView("form")}>Subir factura</button>
           <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>Panel administrativo</button>
+          <button className={view === "repository" ? "active" : ""} onClick={() => setView("repository")}>Repositorio</button>
         </nav>
         <div className="avatar" title="Administrador">MT</div>
       </header>
@@ -158,11 +217,11 @@ export default function Home() {
           <form className="form-card" onSubmit={submitForm}>
             <div className="section-title"><span>01</span><div><h2>Datos generales</h2><p>Información para identificar y clasificar la solicitud.</p></div></div>
             <div className="form-grid">
-              <label>Quién solicita <b>*</b><input required placeholder="Nombre y apellido" /></label>
+              <label>Quién solicita <b>*</b><input required value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Nombre y apellido" /></label>
               <label>Departamento <b>*</b>
-                <select required defaultValue=""><option value="" disabled>Seleccionar departamento</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
+                <select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="" disabled>Seleccionar departamento</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
               </label>
-              <label className="wide">Proveedor <b>*</b><input required list="providers" value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="Buscar o escribir proveedor nuevo" /><datalist id="providers">{providers.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={provider} options={providers} noun="proveedor" /></label>
+              <label className="wide">Proveedor <b>*</b><input required list="providers" value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="Buscar o escribir proveedor nuevo" /><datalist id="providers">{providerOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={provider} options={providerOptions} noun="proveedor" /></label>
             </div>
 
             <div className="divider" />
@@ -172,7 +231,7 @@ export default function Home() {
             </div></fieldset>
             <div className="form-grid">
               <label className="wide">Proyecto <b>*</b><input required list="projects" value={project} onChange={(event) => setProject(event.target.value)} placeholder={`Buscar proyecto de ${projectType} o escribir uno nuevo`} /><datalist id="projects">{currentProjects.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={project} options={currentProjects} noun="proyecto" /></label>
-              <label className="wide">Motivo <b>*</b><input required list="motives" value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Buscar o escribir motivo nuevo" /><datalist id="motives">{motives.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={motive} options={motives} noun="motivo" /></label>
+              <label className="wide">Motivo <b>*</b><input required list="motives" value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Buscar o escribir motivo nuevo" /><datalist id="motives">{motiveOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={motive} options={motiveOptions} noun="motivo" /></label>
               <label className="wide">Comentario <span className="optional">Opcional</span><textarea rows={3} placeholder="Agrega información útil para revisar el pago" /></label>
             </div>
 
@@ -191,7 +250,7 @@ export default function Home() {
 
           {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>PG-082</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => setView("admin")}>Ver en el panel</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
         </section>
-      ) : (
+      ) : view === "admin" ? (
         <section className="page-shell admin-page">
           <div className="admin-heading">
             <div><span className="eyebrow">Administración</span><h1>Proceso 2 · Julio 2026</h1><p>Revisa y actualiza el estado de las facturas recibidas.</p></div>
@@ -226,6 +285,45 @@ export default function Home() {
             </tbody></table></div>
             <div className="table-footer"><span>Mostrando {filteredPayments.length} de {payments.length} solicitudes</span><div><button disabled>‹</button><button className="current">1</button><button disabled>›</button></div></div>
           </div>
+        </section>
+      ) : (
+        <section className="page-shell repository-page">
+          <div className="admin-heading">
+            <div><span className="eyebrow">Documentos organizados</span><h1>Repositorio de facturas</h1><p>Descarga juntas todas las facturas de un departamento para cargarlas en tu sistema.</p></div>
+            <div className="repository-summary"><span>▣</span><div><small>Proceso actual</small><strong>Proceso 2 · Julio 2026</strong></div></div>
+          </div>
+
+          <div className="repository-explainer"><span>i</span><p>Cada factura se almacena automáticamente en la carpeta de su departamento. Al cerrar el proceso podrás descargar cada carpeta en formato ZIP.</p></div>
+
+          <div className="folder-grid">
+            {repositoryStats.map(({ name, payments: departmentItems }) => {
+              const fileCount = departmentItems.reduce((total, item) => total + item.files, 0);
+              return <button key={name} className={`folder-card ${selectedDepartment === name ? "selected" : ""}`} onClick={() => setSelectedDepartment(name)}>
+                <span className="folder-shape"><i /></span>
+                <div><strong>{name}</strong><small>{departmentItems.length} solicitudes · {fileCount} archivos</small></div>
+                <span className="folder-arrow">→</span>
+              </button>;
+            })}
+          </div>
+
+          <div className="repository-card">
+            <div className="repository-toolbar">
+              <div><span className="mini-folder">▰</span><div><h2>{selectedDepartment}</h2><p>{departmentPayments.length} solicitudes en este proceso</p></div></div>
+              <button className="primary download-folder" onClick={() => { setRepositoryNotice(true); window.setTimeout(() => setRepositoryNotice(false), 4200); }}>↓ Descargar carpeta (.zip)</button>
+            </div>
+            {departmentPayments.length ? <div className="file-list">
+              {departmentPayments.flatMap((payment) => Array.from({ length: payment.files }, (_, index) => (
+                <div className="file-row" key={`${payment.id}-${index}`}>
+                  <span className="pdf-icon">PDF</span>
+                  <div><strong>{payment.provider} · {payment.project}</strong><small>{payment.id} · Factura {index + 1} · {payment.requester}</small></div>
+                  <span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span>
+                  <button aria-label={`Descargar factura ${index + 1} de ${payment.provider}`}>↓</button>
+                </div>
+              )))}
+            </div> : <div className="empty-folder"><span>▱</span><h3>Carpeta vacía</h3><p>Todavía no se han recibido facturas para {selectedDepartment}.</p></div>}
+          </div>
+
+          {repositoryNotice && <div className="repository-toast"><span>✓</span><div><strong>Descarga agrupada preparada</strong><p>En la versión definitiva se generará un ZIP con los archivos reales de {selectedDepartment}.</p></div></div>}
         </section>
       )}
     </main>
