@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const departments = [
   "Arquitectura",
@@ -110,7 +110,9 @@ export default function Home() {
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [motive, setMotive] = useState("");
+  const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [sent, setSent] = useState(false);
   const [payments, setPayments] = useState(seedPayments);
   const [statusFilter, setStatusFilter] = useState("Todos");
@@ -407,8 +409,7 @@ export default function Home() {
       formData.set("projectType", projectType);
       formData.set("project", cleanProject);
       formData.set("motive", cleanMotive);
-      const commentField = (event.currentTarget.elements.namedItem("comment") as HTMLTextAreaElement | null)?.value ?? "";
-      formData.set("comment", commentField);
+      formData.set("comment", comment);
       files.forEach((file) => formData.append("files", file));
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
       const result = await response.json() as {
@@ -447,9 +448,12 @@ export default function Home() {
     setProvider("");
     setProject("");
     setMotive("");
+    setComment("");
     setRequester("");
     setDepartment("");
+    setProjectType("DS19");
     setFiles([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setSent(false);
     setSentId("");
     setSubmitError("");
@@ -507,13 +511,13 @@ export default function Home() {
             <div className="form-grid">
               <label className="wide">Proyecto <b>*</b><input required list="projects" value={project} onChange={(event) => setProject(event.target.value)} placeholder={`Buscar proyecto de ${projectType} o escribir uno nuevo`} /><datalist id="projects">{currentProjects.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={project} options={currentProjects} noun="proyecto" /></label>
               <label className="wide">Motivo <b>*</b><input required list="motives" value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Buscar o escribir motivo nuevo" /><datalist id="motives">{motiveOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={motive} options={motiveOptions} noun="motivo" /></label>
-              <label className="wide">Comentario <span className="optional">Opcional</span><textarea name="comment" rows={3} placeholder="Agrega información útil para revisar el pago" /></label>
+              <label className="wide">Comentario <span className="optional">Opcional</span><textarea name="comment" rows={3} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Agrega información útil para revisar el pago" /></label>
             </div>
 
             <div className="divider" />
             <div className="section-title"><span>03</span><div><h2>Documentos</h2><p>Puedes adjuntar una o varias facturas.</p></div></div>
             <label className={`dropzone ${files.length ? "has-files" : ""}`}>
-              <input type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
               <span className="upload-icon">↑</span>
               <strong>{files.length ? `${files.length} archivo${files.length > 1 ? "s" : ""} seleccionado${files.length > 1 ? "s" : ""}` : "Arrastra tus facturas aquí"}</strong>
               <p>{files.length ? files.map((file) => file.name).join(" · ") : "o haz clic para seleccionar archivos"}</p>
@@ -521,7 +525,7 @@ export default function Home() {
             </label>
 
             {submitError && <div className="form-error"><span>!</span>{submitError}</div>}
-            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary" disabled={submitting || !acceptingProcess}>{!acceptingProcess ? "Proceso cerrado" : submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div>
+            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><div className="form-action-buttons"><button type="button" className="secondary clear-form" onClick={resetForm} disabled={submitting}>Limpiar formulario</button><button type="submit" className="primary" disabled={submitting || !acceptingProcess}>{!acceptingProcess ? "Proceso cerrado" : submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div></div>
           </form>
 
           {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => { setSent(false); setView("status"); }}>Consultar estado</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}

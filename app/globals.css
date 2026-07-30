@@ -82,11 +82,14 @@ h1 { font-size: clamp(27px, 4vw, 38px); line-height: 1.12; letter-spacing: -.035
 .dropzone small { color: #9aa4a7; font-size: 9px; }
 .form-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 25px; }
 .form-actions p { color: #919b9e; font-size: 10px; }
+.form-action-buttons { display: flex; align-items: center; gap: 9px; }
 .primary, .secondary { border-radius: 9px; padding: 11px 17px; font-weight: 750; font-size: 12px; cursor: pointer; }
 .primary { border: 1px solid var(--brand); background: var(--brand); color: white; box-shadow: 0 5px 14px rgba(12,107,104,.16); }
 .primary:hover { background: var(--brand-dark); }
 .primary span { margin-left: 14px; }
 .secondary { background: white; border: 1px solid #cfdada; color: #53656a; }
+.clear-form:hover { border-color: #9eaeaf; background: #f7f9f9; }
+.clear-form:disabled { opacity: .58; cursor: wait; }
 
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15,42,48,.52); z-index: 50; display: grid; place-items: center; padding: 20px; backdrop-filter: blur(3px); }
 .success-modal { background: white; border-radius: 17px; padding: 34px; width: min(430px, 100%); text-align: center; box-shadow: 0 25px 70px rgba(14,45,50,.28); }
@@ -276,7 +279,8 @@ td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
   .form-grid .wide { grid-column: auto; }
   .type-options { grid-template-columns: 1fr 1fr; }
   .form-actions { align-items: stretch; flex-direction: column; gap: 8px; }
-  .form-actions .primary { width: 100%; }
+  .form-action-buttons { width: 100%; flex-direction: column-reverse; }
+  .form-actions .primary, .form-actions .secondary { width: 100%; }
   .stats-grid { grid-template-columns: 1fr 1fr; }
   .table-toolbar { flex-wrap: wrap; }
   .search-box { max-width: none; flex-basis: 100%; }
