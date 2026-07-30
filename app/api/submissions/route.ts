@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { requireAdmin } from "../../admin-auth";
 
 const VALID_DEPARTMENTS = new Set([
   "Arquitectura",
@@ -12,7 +13,9 @@ const VALID_TYPES = new Set(["DS19", "DS49", "INMB", "G. Proyectos"]);
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_FILES = 20;
 
-export async function GET() {
+export async function GET(request: Request) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   const rows = await env.DB.prepare(`
     SELECT s.id, s.requester, s.department, s.provider,
            s.project_type AS type, s.project, s.motive, s.comment, s.status,

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { requireAdmin } from "../../../../admin-auth";
 
 type DocumentRow = {
   id: string;
@@ -8,7 +9,9 @@ type DocumentRow = {
   submissionId: string;
 };
 
-export async function GET(_request: Request, context: { params: Promise<{ department: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ department: string }> }) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   const { department: encodedDepartment } = await context.params;
   const department = decodeURIComponent(encodedDepartment);
   const rows = await env.DB.prepare(`

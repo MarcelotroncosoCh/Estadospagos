@@ -1,6 +1,9 @@
 import { env } from "cloudflare:workers";
+import { requireAdmin } from "../../../admin-auth";
 
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   const { id } = await context.params;
   const row = await env.DB.prepare(`
     SELECT file_name AS fileName, content_type AS contentType, object_key AS objectKey

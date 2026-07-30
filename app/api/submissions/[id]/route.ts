@@ -1,8 +1,11 @@
 import { env } from "cloudflare:workers";
+import { requireAdmin } from "../../../admin-auth";
 
 const VALID_STATUSES = new Set(["Recibida", "En proceso", "Pendiente", "Pagada"]);
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   const { id } = await context.params;
   const payload = await request.json() as { status?: string };
   if (!payload.status || !VALID_STATUSES.has(payload.status)) {
@@ -19,7 +22,9 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   return Response.json({ id, status: payload.status });
 }
 
-export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   const { id } = await context.params;
   const submission = await env.DB.prepare(`
     SELECT id FROM submissions WHERE id = ?

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { requireAdmin } from "../../admin-auth";
 
 const ACTIVE_PROCESS_ID = "2026-07-2";
 const DEFAULT_DEADLINE = "2026-07-31T17:00:00-04:00";
@@ -10,6 +11,8 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
   await ensureProcess();
   const payload = await request.json() as { deadline?: string; isOpen?: boolean };
   const current = await readProcess();

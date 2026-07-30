@@ -93,7 +93,7 @@ function toDateTimeLocal(value: string) {
 }
 
 export default function Home() {
-  const [view, setView] = useState<"form" | "admin" | "repository">("form");
+  const [view, setView] = useState<"form" | "status" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
   const [department, setDepartment] = useState("");
   const [projectType, setProjectType] = useState("DS19");
@@ -127,14 +127,21 @@ export default function Home() {
   const [pendingDelete, setPendingDelete] = useState<Payment | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [privateDestination, setPrivateDestination] = useState<"admin" | "repository">("admin");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
 
   useEffect(() => {
     async function hydrate() {
       try {
-        const [catalogResponse, submissionResponse, processResponse] = await Promise.all([
+        const [catalogResponse, submissionResponse, processResponse, authResponse] = await Promise.all([
           fetch("/api/catalogs", { cache: "no-store" }),
-          fetch("/api/submissions", { cache: "no-store" }),
+          fetch("/api/status", { cache: "no-store" }),
           fetch("/api/process", { cache: "no-store" }),
+          fetch("/api/admin-auth", { cache: "no-store" }),
         ]);
         if (!catalogResponse.ok || !submissionResponse.ok || !processResponse.ok) throw new Error("Datos no disponibles");
         const catalogData = await catalogResponse.json() as { entries: Array<{ kind: string; name: string; projectType: string | null }> };
@@ -143,6 +150,10 @@ export default function Home() {
           documents: Array<{ id: string; submissionId: string; fileName: string; size: number }>;
         };
         const processData = await processResponse.json() as { process: ProcessInfo };
+        if (authResponse.ok) {
+          const authData = await authResponse.json() as { authenticated: boolean };
+          setIsAdmin(authData.authenticated);
+        }
         setProcessInfo(processData.process);
         setDeadlineDraft(toDateTimeLocal(processData.process.deadline));
         const providerEntries = catalogData.entries.filter((entry) => entry.kind === "provider").map((entry) => entry.name);
@@ -171,12 +182,76 @@ export default function Home() {
     void hydrate();
   }, []);
 
+  async function loadAdminData() {
+    const response = await fetch("/api/submissions", { cache: "no-store" });
+    if (!response.ok) throw new Error("No fue posible cargar los datos administrativos.");
+    const data = await response.json() as {
+      submissions: Array<Payment & { createdAt: string }>;
+      documents: Array<{ id: string; submissionId: string; fileName: string; size: number }>;
+    };
+    setPayments(data.submissions.map((item) => ({
+      ...item,
+      files: Number(item.files),
+      date: new Date(item.createdAt).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }),
+      documents: data.documents.filter((document) => document.submissionId === item.id),
+    })));
+  }
+
+  async function openPrivate(destination: "admin" | "repository") {
+    if (!isAdmin) {
+      setPrivateDestination(destination);
+      setPassword("");
+      setLoginError("");
+      setLoginOpen(true);
+      return;
+    }
+    try {
+      await loadAdminData();
+      setView(destination);
+    } catch {
+      setIsAdmin(false);
+      setPrivateDestination(destination);
+      setLoginOpen(true);
+    }
+  }
+
+  async function login(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoggingIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch("/api/admin-auth", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible ingresar.");
+      setIsAdmin(true);
+      await loadAdminData();
+      setLoginOpen(false);
+      setPassword("");
+      setView(privateDestination);
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : "No fue posible ingresar.");
+    } finally {
+      setLoggingIn(false);
+    }
+  }
+
+  async function logout() {
+    await fetch("/api/admin-auth", { method: "DELETE" });
+    setIsAdmin(false);
+    setView("form");
+  }
+
   const currentProjects = projectOptions[projectType] ?? [];
   const filteredPayments = useMemo(() => payments.filter((payment) => {
     const matchesStatus = statusFilter === "Todos" || payment.status === statusFilter;
     const term = search.toLowerCase();
     const matchesSearch = !term || [payment.requester, payment.provider, payment.project, payment.id]
-      .some((value) => value.toLowerCase().includes(term));
+      .some((value) => (value ?? "").toLowerCase().includes(term))
+      || payment.department.toLowerCase().includes(term);
     return matchesStatus && matchesSearch;
   }), [payments, search, statusFilter]);
 
@@ -313,10 +388,11 @@ export default function Home() {
         </button>
         <nav aria-label="Navegación principal">
           <button className={view === "form" ? "active" : ""} onClick={() => setView("form")}>Subir factura</button>
-          <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}>Panel administrativo</button>
-          <button className={view === "repository" ? "active" : ""} onClick={() => setView("repository")}>Repositorio</button>
+          <button className={view === "status" ? "active" : ""} onClick={() => setView("status")}>Consultar estado</button>
+          <button className={view === "admin" ? "active" : ""} onClick={() => void openPrivate("admin")}>Panel administrativo</button>
+          <button className={view === "repository" ? "active" : ""} onClick={() => void openPrivate("repository")}>Repositorio</button>
         </nav>
-        <div className="avatar" title="Administrador">MT</div>
+        {isAdmin ? <button className="admin-session" onClick={() => void logout()} title="Cerrar sesión">MT <span>Salir</span></button> : <div className="avatar" title="Zona administrativa protegida">🔒</div>}
       </header>
 
       {view === "form" ? (
@@ -372,7 +448,29 @@ export default function Home() {
             <div className="form-actions"><p><b>*</b> Campos obligatorios</p><button type="submit" className="primary" disabled={submitting || !acceptingProcess}>{!acceptingProcess ? "Proceso cerrado" : submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div>
           </form>
 
-          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => setView("admin")}>Ver en el panel</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
+          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => { setSent(false); setView("status"); }}>Consultar estado</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
+        </section>
+      ) : view === "status" ? (
+        <section className="page-shell status-page">
+          <div className="admin-heading">
+            <div><span className="eyebrow">Seguimiento público</span><h1>Estado de facturas</h1><p>Busca una solicitud para revisar en qué etapa se encuentra.</p></div>
+            <div className="repository-summary"><span>⌕</span><div><small>Proceso actual</small><strong>{processInfo.name}</strong></div></div>
+          </div>
+          <div className="status-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por número, proveedor, proyecto o departamento" /></div>
+          <div className="table-card public-status-card">
+            <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Estado</th></tr></thead><tbody>
+              {filteredPayments.map((payment) => <tr key={payment.id}>
+                <td><strong>{payment.id}</strong><small>{payment.date}</small></td>
+                <td><strong>{payment.provider}</strong></td>
+                <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
+                <td>{payment.department}</td>
+                <td><strong>{payment.files} archivo{payment.files === 1 ? "" : "s"}</strong><small>{payment.documents?.map((document) => document.fileName).join(" · ")}</small></td>
+                <td><span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span></td>
+              </tr>)}
+              {!filteredPayments.length && <tr><td colSpan={6} className="empty-state">No encontramos solicitudes con esa búsqueda.</td></tr>}
+            </tbody></table></div>
+            <div className="table-footer"><span>Mostrando {filteredPayments.length} solicitudes</span></div>
+          </div>
         </section>
       ) : view === "admin" ? (
         <section className="page-shell admin-page">
@@ -481,6 +579,20 @@ export default function Home() {
           {repositoryNotice && <div className="repository-toast"><span>i</span><div><strong>Vista de demostración</strong><p>La descarga real estará disponible cuando el almacenamiento compartido termine de activarse.</p></div></div>}
         </section>
       )}
+
+      {loginOpen && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <form className="success-modal login-modal" onSubmit={login}>
+          <span className="login-lock">🔒</span>
+          <h2 id="login-title">Acceso administrativo</h2>
+          <p>Ingresa la contraseña para abrir el panel administrativo y el repositorio.</p>
+          <label>Contraseña<input autoFocus type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="Ingresa tu contraseña" /></label>
+          {loginError && <div className="form-error"><span>!</span>{loginError}</div>}
+          <div className="modal-actions">
+            <button type="button" className="secondary" disabled={loggingIn} onClick={() => setLoginOpen(false)}>Cancelar</button>
+            <button type="submit" className="primary" disabled={loggingIn || !password}>{loggingIn ? "Ingresando..." : "Ingresar"}</button>
+          </div>
+        </form>
+      </div>}
     </main>
   );
 }
