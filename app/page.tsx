@@ -123,6 +123,10 @@ export default function Home() {
   const [submitError, setSubmitError] = useState("");
   const [sentId, setSentId] = useState("");
   const [dataMode, setDataMode] = useState<"loading" | "live" | "demo">("loading");
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Payment | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     async function hydrate() {
@@ -213,6 +217,26 @@ export default function Home() {
       setSubmitError(error instanceof Error ? error.message : "No fue posible actualizar el proceso.");
     } finally {
       setSavingProcess(false);
+    }
+  }
+
+  async function deleteSubmission() {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      if (dataMode === "live") {
+        const response = await fetch(`/api/submissions/${encodeURIComponent(pendingDelete.id)}`, { method: "DELETE" });
+        const result = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(result.error ?? "No fue posible eliminar el registro.");
+      }
+      setPayments((current) => current.filter((payment) => payment.id !== pendingDelete.id));
+      setPendingDelete(null);
+      setOpenMenuId(null);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : "No fue posible eliminar el registro.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -385,12 +409,23 @@ export default function Home() {
                 <td>{payment.department}</td>
                 <td><button className="files-button">▤ {payment.files} archivo{payment.files > 1 ? "s" : ""}</button></td>
                 <td><select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => updateStatus(payment.id, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select></td>
-                <td><button className="more" aria-label={`Más opciones para ${payment.id}`}>•••</button></td>
+                <td><div className="row-actions">
+                  <button className="more" aria-label={`Más opciones para ${payment.id}`} aria-expanded={openMenuId === payment.id} onClick={() => setOpenMenuId((current) => current === payment.id ? null : payment.id)}>•••</button>
+                  {openMenuId === payment.id && <div className="action-menu"><button onClick={() => { setPendingDelete(payment); setOpenMenuId(null); setDeleteError(""); }}><span>×</span> Eliminar registro</button></div>}
+                </div></td>
               </tr>)}
               {!filteredPayments.length && <tr><td colSpan={7} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
             <div className="table-footer"><span>Mostrando {filteredPayments.length} de {payments.length} solicitudes</span><div><button disabled>‹</button><button className="current">1</button><button disabled>›</button></div></div>
           </div>
+
+          {pendingDelete && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title"><div className="success-modal delete-modal">
+            <span className="delete-icon">×</span>
+            <h2 id="delete-title">¿Eliminar este registro?</h2>
+            <p>Se eliminará <strong>{pendingDelete.id}</strong>, junto con {pendingDelete.files} archivo{pendingDelete.files === 1 ? "" : "s"} de <strong>{pendingDelete.provider}</strong>. Esta acción es permanente.</p>
+            {deleteError && <div className="form-error"><span>!</span>{deleteError}</div>}
+            <div className="modal-actions"><button className="secondary" disabled={deleting} onClick={() => setPendingDelete(null)}>Cancelar</button><button className="danger-button" disabled={deleting} onClick={() => void deleteSubmission()}>{deleting ? "Eliminando..." : "Sí, eliminar"}</button></div>
+          </div></div>}
         </section>
       ) : (
         <section className="page-shell repository-page">

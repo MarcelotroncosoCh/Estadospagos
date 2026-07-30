@@ -92,6 +92,10 @@ h1 { font-size: clamp(27px, 4vw, 38px); line-height: 1.12; letter-spacing: -.035
 .success-modal h2 { margin: 0; font-size: 21px; }
 .success-modal p { color: #6c7c81; line-height: 1.6; font-size: 13px; }
 .modal-actions { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+.delete-modal { width: min(450px, 100%); }
+.delete-icon { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 17px; background: #fae8e8; color: #ae4646; font-size: 28px; font-weight: 700; }
+.danger-button { border: 1px solid #a94343; border-radius: 9px; background: #a94343; color: white; padding: 11px 17px; font-size: 12px; font-weight: 750; cursor: pointer; }
+.danger-button:disabled, .secondary:disabled { opacity: .6; cursor: wait; }
 
 .admin-page, .repository-page { width: min(1240px, calc(100% - 40px)); }
 .process-control { min-width: 310px; display: flex; align-items: center; justify-content: space-between; background: white; border: 1px solid var(--line); border-radius: 12px; padding: 10px 11px 10px 14px; }
@@ -140,6 +144,11 @@ td strong { color: #233e46; font-size: 11px; }
 td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
 .files-button, .more { border: 0; background: none; color: var(--brand); font-size: 10px; cursor: pointer; white-space: nowrap; }
 .more { color: #758489; font-weight: 800; }
+.row-actions { position: relative; display: inline-block; }
+.action-menu { position: absolute; right: 0; top: 28px; width: 155px; padding: 5px; border: 1px solid #e4dede; border-radius: 9px; background: white; box-shadow: 0 12px 28px rgba(35,54,58,.16); z-index: 8; }
+.action-menu button { width: 100%; border: 0; border-radius: 6px; background: white; color: #9c4545; padding: 9px 10px; text-align: left; font-size: 9px; font-weight: 700; cursor: pointer; }
+.action-menu button:hover { background: #fff2f2; }
+.action-menu button span { display: inline-grid; place-items: center; width: 17px; height: 17px; margin-right: 6px; border-radius: 5px; background: #f8e3e3; }
 .status-select { border: 0; border-radius: 20px; padding: 7px 28px 7px 10px; font-size: 9px; font-weight: 750; min-width: 105px; }
 .status-select.recibida, .badge.received { background: #e5f2f8; color: #27789b; }
 .status-select.en-proceso { background: #fbf2dc; color: #906a1e; }

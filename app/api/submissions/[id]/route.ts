@@ -18,3 +18,26 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   }
   return Response.json({ id, status: payload.status });
 }
+
+export async function DELETE(_request: Request, context: { params: Promise<{ id: string }> }) {
+  const { id } = await context.params;
+  const submission = await env.DB.prepare(`
+    SELECT id FROM submissions WHERE id = ?
+  `).bind(id).first<{ id: string }>();
+  if (!submission) {
+    return Response.json({ error: "Solicitud no encontrada." }, { status: 404 });
+  }
+
+  const documents = await env.DB.prepare(`
+    SELECT object_key AS objectKey FROM documents WHERE submission_id = ?
+  `).bind(id).all<{ objectKey: string }>();
+
+  try {
+    await Promise.all(documents.results.map((document) => env.FILES.delete(document.objectKey)));
+    await env.DB.prepare("DELETE FROM submissions WHERE id = ?").bind(id).run();
+    return Response.json({ id, deleted: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No fue posible eliminar la solicitud.";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
