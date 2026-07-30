@@ -72,6 +72,13 @@ type Payment = {
   date: string;
   documents?: Array<{ id: string; fileName: string; size: number }>;
 };
+type CatalogEntry = {
+  id: number;
+  kind: "provider" | "project";
+  name: string;
+  projectType: string | null;
+  createdAt?: string;
+};
 
 const seedPayments: Payment[] = [
   { id: "PG-081", requester: "Camila Soto", department: "Ingeniería", provider: "Consultora Urbanit", project: "Doña Ignacia X", type: "DS19", motive: "IMIV", files: 2, status: "Recibida", date: "30 jul, 09:42" },
@@ -133,6 +140,15 @@ export default function Home() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
+  const [catalogManagerOpen, setCatalogManagerOpen] = useState(false);
+  const [adminCatalogs, setAdminCatalogs] = useState<CatalogEntry[]>([]);
+  const [catalogKind, setCatalogKind] = useState<"provider" | "project">("provider");
+  const [catalogSearch, setCatalogSearch] = useState("");
+  const [editingCatalog, setEditingCatalog] = useState<CatalogEntry | null>(null);
+  const [catalogDraft, setCatalogDraft] = useState("");
+  const [catalogTypeDraft, setCatalogTypeDraft] = useState("DS19");
+  const [catalogBusy, setCatalogBusy] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
 
   useEffect(() => {
     async function hydrate() {
@@ -183,18 +199,75 @@ export default function Home() {
   }, []);
 
   async function loadAdminData() {
-    const response = await fetch("/api/submissions", { cache: "no-store" });
-    if (!response.ok) throw new Error("No fue posible cargar los datos administrativos.");
+    const [response, catalogResponse] = await Promise.all([
+      fetch("/api/submissions", { cache: "no-store" }),
+      fetch("/api/catalogs/admin", { cache: "no-store" }),
+    ]);
+    if (!response.ok || !catalogResponse.ok) throw new Error("No fue posible cargar los datos administrativos.");
     const data = await response.json() as {
       submissions: Array<Payment & { createdAt: string }>;
       documents: Array<{ id: string; submissionId: string; fileName: string; size: number }>;
     };
+    const catalogData = await catalogResponse.json() as { entries: CatalogEntry[] };
+    setAdminCatalogs(catalogData.entries);
     setPayments(data.submissions.map((item) => ({
       ...item,
       files: Number(item.files),
       date: new Date(item.createdAt).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }),
       documents: data.documents.filter((document) => document.submissionId === item.id),
     })));
+  }
+
+  async function saveCatalogEntry() {
+    if (!editingCatalog) return;
+    setCatalogBusy(true);
+    setCatalogError("");
+    try {
+      const response = await fetch("/api/catalogs/admin", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: editingCatalog.id, name: catalogDraft, projectType: catalogTypeDraft }),
+      });
+      const result = await response.json() as { entry?: CatalogEntry; error?: string };
+      if (!response.ok || !result.entry) throw new Error(result.error ?? "No fue posible modificar el elemento.");
+      setAdminCatalogs((current) => current.map((entry) => entry.id === result.entry!.id ? { ...entry, ...result.entry } : entry));
+      if (editingCatalog.kind === "provider") {
+        setProviderOptions((current) => Array.from(new Set(current.map((item) => item === editingCatalog.name ? result.entry!.name : item))));
+      } else {
+        setProjectOptions((current) => {
+          const next = Object.fromEntries(Object.entries(current).map(([type, items]) => [type, items.filter((item) => item !== editingCatalog.name)]));
+          const targetType = result.entry!.projectType ?? editingCatalog.projectType ?? "DS19";
+          next[targetType] = Array.from(new Set([...(next[targetType] ?? []), result.entry!.name]));
+          return next;
+        });
+      }
+      setEditingCatalog(null);
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : "No fue posible modificar el elemento.");
+    } finally {
+      setCatalogBusy(false);
+    }
+  }
+
+  async function deleteCatalogEntry(entry: CatalogEntry) {
+    if (!window.confirm(`¿Eliminar "${entry.name}" de la lista? Las solicitudes anteriores no se modificarán.`)) return;
+    setCatalogBusy(true);
+    setCatalogError("");
+    try {
+      const response = await fetch(`/api/catalogs/admin?id=${entry.id}`, { method: "DELETE" });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible eliminar el elemento.");
+      setAdminCatalogs((current) => current.filter((item) => item.id !== entry.id));
+      if (entry.kind === "provider") setProviderOptions((current) => current.filter((item) => item !== entry.name));
+      if (entry.kind === "project") setProjectOptions((current) => ({
+        ...current,
+        [entry.projectType ?? ""]: (current[entry.projectType ?? ""] ?? []).filter((item) => item !== entry.name),
+      }));
+    } catch (error) {
+      setCatalogError(error instanceof Error ? error.message : "No fue posible eliminar el elemento.");
+    } finally {
+      setCatalogBusy(false);
+    }
   }
 
   async function openPrivate(destination: "admin" | "repository") {
@@ -263,6 +336,9 @@ export default function Home() {
     name,
     payments: payments.filter((payment) => payment.department === name),
   }));
+  const visibleCatalogs = adminCatalogs.filter((entry) =>
+    entry.kind === catalogKind && (!catalogSearch || entry.name.toLowerCase().includes(catalogSearch.toLowerCase()))
+  );
 
   async function updateStatus(id: string, status: Status) {
     if (dataMode === "live") {
@@ -485,6 +561,31 @@ export default function Home() {
             <button disabled={savingProcess || !deadlineDraft} onClick={() => void updateProcess({ deadline: new Date(deadlineDraft).toISOString() })}>{savingProcess ? "Guardando..." : "Guardar fecha"}</button>
           </div>
 
+          <div className="catalog-admin">
+            <button className="catalog-toggle" onClick={() => setCatalogManagerOpen((current) => !current)} aria-expanded={catalogManagerOpen}>
+              <span>⌘</span><div><strong>Administrar proveedores y proyectos</strong><small>Revisa, corrige o elimina los elementos agregados desde el formulario.</small></div><b>{catalogManagerOpen ? "Cerrar" : "Revisar listas"}</b>
+            </button>
+            {catalogManagerOpen && <div className="catalog-panel">
+              <div className="catalog-toolbar">
+                <div className="catalog-tabs">
+                  <button className={catalogKind === "provider" ? "active" : ""} onClick={() => setCatalogKind("provider")}>Proveedores</button>
+                  <button className={catalogKind === "project" ? "active" : ""} onClick={() => setCatalogKind("project")}>Proyectos</button>
+                </div>
+                <input value={catalogSearch} onChange={(event) => setCatalogSearch(event.target.value)} placeholder={`Buscar ${catalogKind === "provider" ? "proveedor" : "proyecto"}`} />
+              </div>
+              <div className="catalog-note"><span>i</span> Aquí aparecen los nombres nuevos agregados por los usuarios. Las listas originales se mantienen protegidas.</div>
+              {catalogError && <div className="form-error"><span>!</span>{catalogError}</div>}
+              <div className="catalog-list">
+                {visibleCatalogs.map((entry) => <div className="catalog-row" key={entry.id}>
+                  <div><strong>{entry.name}</strong><small>{entry.kind === "project" ? `Proyecto ${entry.projectType}` : "Proveedor agregado"} · Las solicitudes anteriores no cambian</small></div>
+                  <button disabled={catalogBusy} onClick={() => { setEditingCatalog(entry); setCatalogDraft(entry.name); setCatalogTypeDraft(entry.projectType ?? "DS19"); setCatalogError(""); }}>Modificar</button>
+                  <button className="catalog-delete" disabled={catalogBusy} onClick={() => void deleteCatalogEntry(entry)}>Eliminar</button>
+                </div>)}
+                {!visibleCatalogs.length && <div className="empty-catalog">No hay {catalogKind === "provider" ? "proveedores" : "proyectos"} nuevos con esa búsqueda.</div>}
+              </div>
+            </div>}
+          </div>
+
           <div className="stats-grid">
             <button onClick={() => setStatusFilter("Todos")} className={statusFilter === "Todos" ? "selected" : ""}><span className="stat-icon all">▦</span><div><strong>{payments.length}</strong><small>Total recibidas</small></div></button>
             <button onClick={() => setStatusFilter("Recibida")} className={statusFilter === "Recibida" ? "selected" : ""}><span className="stat-icon received">↓</span><div><strong>{counts("Recibida")}</strong><small>Recibidas</small></div></button>
@@ -579,6 +680,21 @@ export default function Home() {
           {repositoryNotice && <div className="repository-toast"><span>i</span><div><strong>Vista de demostración</strong><p>La descarga real estará disponible cuando el almacenamiento compartido termine de activarse.</p></div></div>}
         </section>
       )}
+
+      {editingCatalog && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="catalog-edit-title">
+        <div className="success-modal login-modal">
+          <span className="login-lock">✎</span>
+          <h2 id="catalog-edit-title">Modificar {editingCatalog.kind === "provider" ? "proveedor" : "proyecto"}</h2>
+          <p>El cambio se aplicará a la lista disponible para las próximas solicitudes.</p>
+          <label>Nombre<input autoFocus value={catalogDraft} onChange={(event) => setCatalogDraft(event.target.value)} /></label>
+          {editingCatalog.kind === "project" && <label>Tipo de proyecto<select value={catalogTypeDraft} onChange={(event) => setCatalogTypeDraft(event.target.value)}><option>DS19</option><option>DS49</option><option>INMB</option><option>G. Proyectos</option></select></label>}
+          {catalogError && <div className="form-error"><span>!</span>{catalogError}</div>}
+          <div className="modal-actions">
+            <button className="secondary" disabled={catalogBusy} onClick={() => setEditingCatalog(null)}>Cancelar</button>
+            <button className="primary" disabled={catalogBusy || !catalogDraft.trim()} onClick={() => void saveCatalogEntry()}>{catalogBusy ? "Guardando..." : "Guardar cambio"}</button>
+          </div>
+        </div>
+      </div>}
 
       {loginOpen && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="login-title">
         <form className="success-modal login-modal" onSubmit={login}>
