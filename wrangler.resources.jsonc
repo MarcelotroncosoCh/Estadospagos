@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "estadospagos",
+  "compatibility_date": "2026-05-15",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "estadospagos-db",
+      "database_id": "0fa1221a-2c58-4414-abbe-a1f57437e348",
+      "migrations_dir": "drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "FILES",
+      "bucket_name": "estadospagos-files"
+    }
+  ]
+}

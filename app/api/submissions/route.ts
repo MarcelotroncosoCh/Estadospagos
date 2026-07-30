@@ -12,6 +12,7 @@ const VALID_DEPARTMENTS = new Set([
 const VALID_TYPES = new Set(["DS19", "DS49", "INMB", "G. Proyectos"]);
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_FILES = 20;
+const SAFE_STORAGE_LIMIT = 8 * 1024 * 1024 * 1024;
 
 export async function GET(request: Request) {
   const unauthorized = await requireAdmin(request);
@@ -67,6 +68,16 @@ export async function POST(request: Request) {
   }
   if (!files.length || files.length > MAX_FILES || files.some((file) => file.size > MAX_FILE_SIZE)) {
     return Response.json({ error: "Adjunta entre 1 y 20 archivos, de máximo 15 MB cada uno." }, { status: 400 });
+  }
+  const storage = await env.DB.prepare(`
+    SELECT COALESCE(SUM(size), 0) AS usedBytes FROM documents
+  `).first<{ usedBytes: number }>();
+  const incomingBytes = files.reduce((total, file) => total + file.size, 0);
+  if (Number(storage?.usedBytes ?? 0) + incomingBytes > SAFE_STORAGE_LIMIT) {
+    return Response.json({
+      error: "El almacenamiento alcanzó el límite preventivo gratuito de 8 GB. Descarga y elimina procesos antiguos antes de subir nuevas facturas.",
+      code: "FREE_STORAGE_LIMIT",
+    }, { status: 507 });
   }
 
   const id = `PG-${Date.now().toString(36).toUpperCase()}`;
