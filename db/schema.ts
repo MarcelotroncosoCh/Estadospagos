@@ -22,6 +22,7 @@ export const catalogEntries = sqliteTable("catalog_entries", {
 export const submissions = sqliteTable("submissions", {
   id: text("id").primaryKey(),
   processId: text("process_id").notNull().default("2026-07-2"),
+  paymentPeriod: text("payment_period").notNull().default("2026-07-31T17:00:00-04:00"),
   requester: text("requester").notNull(),
   requesterEmail: text("requester_email"),
   department: text("department").notNull(),
@@ -37,6 +38,7 @@ export const submissions = sqliteTable("submissions", {
   index("submissions_department_idx").on(table.department),
   index("submissions_status_idx").on(table.status),
   index("submissions_process_idx").on(table.processId),
+  index("submissions_department_period_idx").on(table.department, table.paymentPeriod),
 ]);
 
 export const documents = sqliteTable("documents", {

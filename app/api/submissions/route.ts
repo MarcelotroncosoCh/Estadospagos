@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
   const rows = await env.DB.prepare(`
-    SELECT s.id, s.requester, s.department, s.provider,
+    SELECT s.id, s.requester, s.department, s.provider, s.payment_period AS periodDeadline,
            s.project_type AS type, s.project, s.motive, s.comment, s.status,
            s.created_at AS createdAt, COUNT(d.id) AS files
     FROM submissions s
@@ -87,7 +87,8 @@ export async function POST(request: Request) {
   try {
     for (const file of files) {
       const documentId = crypto.randomUUID();
-      const key = `2026-07-2/${slug(department)}/${id}/${documentId}-${safeFileName(file.name)}`;
+      const periodKey = activeProcess.deadline.slice(0, 10);
+      const key = `${periodKey}/${slug(department)}/${id}/${documentId}-${safeFileName(file.name)}`;
       await env.FILES.put(key, file.stream(), {
         httpMetadata: { contentType: file.type || "application/octet-stream" },
         customMetadata: { submissionId: id, department },
@@ -99,11 +100,12 @@ export async function POST(request: Request) {
     const statements = [
       env.DB.prepare(`
         INSERT INTO submissions (
-          id, process_id, requester, requester_email, department, provider,
+          id, process_id, payment_period, requester, requester_email, department, provider,
           project_type, project, motive, comment, status
-        ) VALUES (?, '2026-07-2', ?, ?, ?, ?, ?, ?, ?, ?, 'Recibida')
+        ) VALUES (?, '2026-07-2', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Recibida')
       `).bind(
         id,
+        activeProcess.deadline,
         requester,
         request.headers.get("oai-authenticated-user-email"),
         department,

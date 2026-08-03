@@ -14,14 +14,18 @@ export async function GET(request: Request, context: { params: Promise<{ departm
   if (unauthorized) return unauthorized;
   const { department: encodedDepartment } = await context.params;
   const department = decodeURIComponent(encodedDepartment);
+  const period = new URL(request.url).searchParams.get("period");
+  if (!period || Number.isNaN(Date.parse(period))) {
+    return Response.json({ error: "Selecciona un período de pago válido." }, { status: 400 });
+  }
   const rows = await env.DB.prepare(`
     SELECT d.id, d.file_name AS fileName, d.object_key AS objectKey,
            s.provider, s.id AS submissionId
     FROM documents d
     INNER JOIN submissions s ON s.id = d.submission_id
-    WHERE s.department = ? AND s.process_id = '2026-07-2'
+    WHERE s.department = ? AND s.payment_period = ?
     ORDER BY s.created_at, d.created_at
-  `).bind(department).all<DocumentRow>();
+  `).bind(department, period).all<DocumentRow>();
 
   if (!rows.results.length) {
     return Response.json({ error: "La carpeta no tiene archivos." }, { status: 404 });
@@ -44,7 +48,7 @@ export async function GET(request: Request, context: { params: Promise<{ departm
   }
 
   const zip = buildStoredZip(entries);
-  const fileName = `${safeSegment(department)}-proceso-2-julio-2026.zip`;
+  const fileName = `${safeSegment(department)}-periodo-${period.slice(0, 10)}.zip`;
   return new Response(zip, {
     headers: {
       "content-type": "application/zip",

@@ -70,6 +70,7 @@ type Payment = {
   files: number;
   status: Status;
   date: string;
+  periodDeadline: string;
   documents?: Array<{ id: string; fileName: string; size: number }>;
 };
 type CatalogEntry = {
@@ -81,11 +82,11 @@ type CatalogEntry = {
 };
 
 const seedPayments: Payment[] = [
-  { id: "PG-081", requester: "Camila Soto", department: "Ingeniería", provider: "Consultora Urbanit", project: "Doña Ignacia X", type: "DS19", motive: "IMIV", files: 2, status: "Recibida", date: "30 jul, 09:42" },
-  { id: "PG-080", requester: "Diego Pérez", department: "Arquitectura", provider: "Francisco Leiva", project: "Altos del Maitén 12", type: "INMB", motive: "Revisor", files: 1, status: "En proceso", date: "29 jul, 16:18" },
-  { id: "PG-079", requester: "Sofía Muñoz", department: "Oficina Técnica", provider: "GBELEC", project: "Alto Manque II", type: "INMB", motive: "Electricidad", files: 3, status: "Pendiente", date: "29 jul, 12:06" },
-  { id: "PG-078", requester: "Matías Rojas", department: "Gerencia de Proyectos", provider: "CEVCHILE", project: "Renku II", type: "DS19", motive: "Calificación Energética", files: 1, status: "Pagada", date: "28 jul, 10:35" },
-  { id: "PG-077", requester: "Josefa Díaz", department: "Topografía", provider: "Francisco Adasme y CIA", project: "Parque Los Coihues", type: "INMB", motive: "Topografía", files: 2, status: "En proceso", date: "28 jul, 09:11" },
+  { id: "PG-081", requester: "Camila Soto", department: "Ingeniería", provider: "Consultora Urbanit", project: "Doña Ignacia X", type: "DS19", motive: "IMIV", files: 2, status: "Recibida", date: "30 jul, 09:42", periodDeadline: "2026-07-31T17:00:00-04:00" },
+  { id: "PG-080", requester: "Diego Pérez", department: "Arquitectura", provider: "Francisco Leiva", project: "Altos del Maitén 12", type: "INMB", motive: "Revisor", files: 1, status: "En proceso", date: "29 jul, 16:18", periodDeadline: "2026-07-31T17:00:00-04:00" },
+  { id: "PG-079", requester: "Sofía Muñoz", department: "Oficina Técnica", provider: "GBELEC", project: "Alto Manque II", type: "INMB", motive: "Electricidad", files: 3, status: "Pendiente", date: "29 jul, 12:06", periodDeadline: "2026-07-31T17:00:00-04:00" },
+  { id: "PG-078", requester: "Matías Rojas", department: "Gerencia de Proyectos", provider: "CEVCHILE", project: "Renku II", type: "DS19", motive: "Calificación Energética", files: 1, status: "Pagada", date: "28 jul, 10:35", periodDeadline: "2026-07-31T17:00:00-04:00" },
+  { id: "PG-077", requester: "Josefa Díaz", department: "Topografía", provider: "Francisco Adasme y CIA", project: "Parque Los Coihues", type: "INMB", motive: "Topografía", files: 2, status: "En proceso", date: "28 jul, 09:11", periodDeadline: "2026-07-31T17:00:00-04:00" },
 ];
 
 function FieldHint({ value, options, noun }: { value: string; options: string[]; noun: string }) {
@@ -97,6 +98,11 @@ function toDateTimeLocal(value: string) {
   const date = new Date(value);
   const part = (number: number) => String(number).padStart(2, "0");
   return `${date.getFullYear()}-${part(date.getMonth() + 1)}-${part(date.getDate())}T${part(date.getHours())}:${part(date.getMinutes())}`;
+}
+
+function formatPeriodDate(value: string) {
+  const date = new Date(value);
+  return new Intl.DateTimeFormat("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
 export default function Home() {
@@ -112,6 +118,7 @@ export default function Home() {
   const [motive, setMotive] = useState("");
   const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sent, setSent] = useState(false);
   const [payments, setPayments] = useState(seedPayments);
@@ -127,6 +134,7 @@ export default function Home() {
   const [deadlineDraft, setDeadlineDraft] = useState("2026-07-31T17:00");
   const [savingProcess, setSavingProcess] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState("Ingeniería");
+  const [selectedPeriod, setSelectedPeriod] = useState("");
   const [repositoryNotice, setRepositoryNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -334,6 +342,10 @@ export default function Home() {
   const deadlineExpired = Date.now() >= Date.parse(processInfo.deadline);
   const acceptingProcess = processInfo.isOpen && !deadlineExpired;
   const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment);
+  const departmentPeriods = Array.from(new Set(departmentPayments.map((payment) => payment.periodDeadline).filter(Boolean)))
+    .sort((a, b) => Date.parse(b) - Date.parse(a));
+  const effectivePeriod = departmentPeriods.includes(selectedPeriod) ? selectedPeriod : (departmentPeriods[0] ?? "");
+  const periodPayments = departmentPayments.filter((payment) => payment.periodDeadline === effectivePeriod);
   const repositoryStats = departments.map((name) => ({
     name,
     payments: payments.filter((payment) => payment.department === name),
@@ -428,6 +440,7 @@ export default function Home() {
         files: files.length,
         status: result.submission.status,
         date: "Ahora",
+        periodDeadline: processInfo.deadline,
         documents: result.submission.documents,
       };
       setPayments((current) => [created, ...current]);
@@ -457,6 +470,19 @@ export default function Home() {
     setSent(false);
     setSentId("");
     setSubmitError("");
+  }
+
+  function receiveFiles(fileList: FileList | null) {
+    if (!fileList) return;
+    setFiles(Array.from(fileList));
+    setSubmitError("");
+  }
+
+  function handleFileDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingFiles(false);
+    receiveFiles(event.dataTransfer.files);
   }
 
   return (
@@ -516,8 +542,14 @@ export default function Home() {
 
             <div className="divider" />
             <div className="section-title"><span>03</span><div><h2>Documentos</h2><p>Puedes adjuntar una o varias facturas.</p></div></div>
-            <label className={`dropzone ${files.length ? "has-files" : ""}`}>
-              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => setFiles(Array.from(event.target.files ?? []))} />
+            <label
+              className={`dropzone ${files.length ? "has-files" : ""} ${isDraggingFiles ? "is-dragging" : ""}`}
+              onDragEnter={(event) => { event.preventDefault(); setIsDraggingFiles(true); }}
+              onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setIsDraggingFiles(true); }}
+              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDraggingFiles(false); }}
+              onDrop={handleFileDrop}
+            >
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => receiveFiles(event.target.files)} />
               <span className="upload-icon">↑</span>
               <strong>{files.length ? `${files.length} archivo${files.length > 1 ? "s" : ""} seleccionado${files.length > 1 ? "s" : ""}` : "Arrastra tus facturas aquí"}</strong>
               <p>{files.length ? files.map((file) => file.name).join(" · ") : "o haz clic para seleccionar archivos"}</p>
@@ -637,12 +669,12 @@ export default function Home() {
             <div className="repository-summary"><span>▣</span><div><small>Proceso actual</small><strong>{processInfo.name}</strong></div></div>
           </div>
 
-          <div className="repository-explainer"><span>i</span><p>Cada factura se almacena automáticamente en la carpeta de su departamento. Al cerrar el proceso podrás descargar cada carpeta en formato ZIP.</p></div>
+          <div className="repository-explainer"><span>i</span><p>Cada factura se almacena automáticamente por departamento y período de pago. Selecciona la fecha de cierre para revisar o descargar solo ese grupo.</p></div>
 
           <div className="folder-grid">
             {repositoryStats.map(({ name, payments: departmentItems }) => {
               const fileCount = departmentItems.reduce((total, item) => total + item.files, 0);
-              return <button key={name} className={`folder-card ${selectedDepartment === name ? "selected" : ""}`} onClick={() => setSelectedDepartment(name)}>
+              return <button key={name} className={`folder-card ${selectedDepartment === name ? "selected" : ""}`} onClick={() => { setSelectedDepartment(name); setSelectedPeriod(""); }}>
                 <span className="folder-shape"><i /></span>
                 <div><strong>{name}</strong><small>{departmentItems.length} solicitudes · {fileCount} archivos</small></div>
                 <span className="folder-arrow">→</span>
@@ -650,20 +682,35 @@ export default function Home() {
             })}
           </div>
 
+          <div className="period-section">
+            <div className="period-heading"><div><span className="eyebrow">{selectedDepartment}</span><h2>Períodos de pago</h2></div><small>{departmentPeriods.length} período{departmentPeriods.length === 1 ? "" : "s"}</small></div>
+            {departmentPeriods.length ? <div className="period-grid">
+              {departmentPeriods.map((period) => {
+                const items = departmentPayments.filter((payment) => payment.periodDeadline === period);
+                const fileCount = items.reduce((total, item) => total + item.files, 0);
+                return <button key={period} className={`period-card ${effectivePeriod === period ? "selected" : ""}`} onClick={() => setSelectedPeriod(period)}>
+                  <span className="folder-shape"><i /></span>
+                  <div><strong>Período de pago {formatPeriodDate(period)}</strong><small>{items.length} solicitudes · {fileCount} archivos</small></div>
+                  <span className="folder-arrow">→</span>
+                </button>;
+              })}
+            </div> : <div className="empty-periods">Este departamento todavía no tiene períodos de pago.</div>}
+          </div>
+
           <div className="repository-card">
             <div className="repository-toolbar">
-              <div><span className="mini-folder">▰</span><div><h2>{selectedDepartment}</h2><p>{departmentPayments.length} solicitudes en este proceso</p></div></div>
+              <div><span className="mini-folder">▰</span><div><h2>{selectedDepartment}</h2><p>{effectivePeriod ? `Período de pago ${formatPeriodDate(effectivePeriod)} · ${periodPayments.length} solicitudes` : "Sin período seleccionado"}</p></div></div>
               <button className="primary download-folder" onClick={() => {
-                if (dataMode === "live") {
-                  window.location.href = `/api/departments/${encodeURIComponent(selectedDepartment)}/download`;
+                if (dataMode === "live" && effectivePeriod) {
+                  window.location.href = `/api/departments/${encodeURIComponent(selectedDepartment)}/download?period=${encodeURIComponent(effectivePeriod)}`;
                 } else {
                   setRepositoryNotice(true);
                   window.setTimeout(() => setRepositoryNotice(false), 4200);
                 }
-              }}>↓ Descargar carpeta (.zip)</button>
+              }} disabled={!effectivePeriod}>↓ Descargar período (.zip)</button>
             </div>
-            {departmentPayments.length ? <div className="file-list">
-              {departmentPayments.flatMap((payment) => {
+            {periodPayments.length ? <div className="file-list">
+              {periodPayments.flatMap((payment) => {
                 const documentItems = payment.documents?.length
                   ? payment.documents
                   : Array.from({ length: payment.files }, (_, index) => ({ id: "", fileName: `Factura ${index + 1}`, size: 0 }));
@@ -678,7 +725,7 @@ export default function Home() {
                   </div>
                 ));
               })}
-            </div> : <div className="empty-folder"><span>▱</span><h3>Carpeta vacía</h3><p>Todavía no se han recibido facturas para {selectedDepartment}.</p></div>}
+            </div> : <div className="empty-folder"><span>▱</span><h3>Carpeta vacía</h3><p>Todavía no se han recibido facturas para este período.</p></div>}
           </div>
 
           {repositoryNotice && <div className="repository-toast"><span>i</span><div><strong>Vista de demostración</strong><p>La descarga real estará disponible cuando el almacenamiento compartido termine de activarse.</p></div></div>}
