@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 export async function GET() {
   const submissions = await env.DB.prepare(`
     SELECT s.id, s.department, s.provider, s.project_type AS type, s.payment_period AS periodDeadline,
+           s.waiting_for_period AS waitingForPeriod,
            s.project, s.status, s.created_at AS createdAt, COUNT(d.id) AS files
     FROM submissions s
     LEFT JOIN documents d ON d.submission_id = s.id

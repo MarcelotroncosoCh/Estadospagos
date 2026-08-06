@@ -11,6 +11,17 @@ const departments = [
   "Topografía",
 ];
 
+const requesters = [
+  "Ronald Torres",
+  "Jorge Arenas",
+  "Albert Cifuentes",
+  "Cintya Gonzalez",
+  "Maria Jose Troncoso",
+  "Marcelo Troncoso",
+  "Diego Diaz",
+  "Jesus Sierra",
+];
+
 const baseProviders = [
   "Alfonso Larraín y Asociados", "Apica", "Arquitectura AHA",
   "Arquitectura y Eficiencia Energética CEVCHILE", "Axisterra",
@@ -71,6 +82,7 @@ type Payment = {
   status: Status;
   date: string;
   periodDeadline: string;
+  waitingForPeriod: boolean;
   documents?: Array<{ id: string; fileName: string; size: number }>;
 };
 type CatalogEntry = {
@@ -82,11 +94,11 @@ type CatalogEntry = {
 };
 
 const seedPayments: Payment[] = [
-  { id: "PG-081", requester: "Camila Soto", department: "Ingeniería", provider: "Consultora Urbanit", project: "Doña Ignacia X", type: "DS19", motive: "IMIV", files: 2, status: "Recibida", date: "30 jul, 09:42", periodDeadline: "2026-07-31T17:00:00-04:00" },
-  { id: "PG-080", requester: "Diego Pérez", department: "Arquitectura", provider: "Francisco Leiva", project: "Altos del Maitén 12", type: "INMB", motive: "Revisor", files: 1, status: "En proceso", date: "29 jul, 16:18", periodDeadline: "2026-07-31T17:00:00-04:00" },
-  { id: "PG-079", requester: "Sofía Muñoz", department: "Oficina Técnica", provider: "GBELEC", project: "Alto Manque II", type: "INMB", motive: "Electricidad", files: 3, status: "Pendiente", date: "29 jul, 12:06", periodDeadline: "2026-07-31T17:00:00-04:00" },
-  { id: "PG-078", requester: "Matías Rojas", department: "Gerencia de Proyectos", provider: "CEVCHILE", project: "Renku II", type: "DS19", motive: "Calificación Energética", files: 1, status: "Pagada", date: "28 jul, 10:35", periodDeadline: "2026-07-31T17:00:00-04:00" },
-  { id: "PG-077", requester: "Josefa Díaz", department: "Topografía", provider: "Francisco Adasme y CIA", project: "Parque Los Coihues", type: "INMB", motive: "Topografía", files: 2, status: "En proceso", date: "28 jul, 09:11", periodDeadline: "2026-07-31T17:00:00-04:00" },
+  { id: "PG-081", requester: "Camila Soto", department: "Ingeniería", provider: "Consultora Urbanit", project: "Doña Ignacia X", type: "DS19", motive: "IMIV", files: 2, status: "Recibida", date: "30 jul, 09:42", periodDeadline: "2026-07-31T17:00:00-04:00", waitingForPeriod: false },
+  { id: "PG-080", requester: "Diego Pérez", department: "Arquitectura", provider: "Francisco Leiva", project: "Altos del Maitén 12", type: "INMB", motive: "Revisor", files: 1, status: "En proceso", date: "29 jul, 16:18", periodDeadline: "2026-07-31T17:00:00-04:00", waitingForPeriod: false },
+  { id: "PG-079", requester: "Sofía Muñoz", department: "Oficina Técnica", provider: "GBELEC", project: "Alto Manque II", type: "INMB", motive: "Electricidad", files: 3, status: "Pendiente", date: "29 jul, 12:06", periodDeadline: "2026-07-31T17:00:00-04:00", waitingForPeriod: false },
+  { id: "PG-078", requester: "Matías Rojas", department: "Gerencia de Proyectos", provider: "CEVCHILE", project: "Renku II", type: "DS19", motive: "Calificación Energética", files: 1, status: "Pagada", date: "28 jul, 10:35", periodDeadline: "2026-07-31T17:00:00-04:00", waitingForPeriod: false },
+  { id: "PG-077", requester: "Josefa Díaz", department: "Topografía", provider: "Francisco Adasme y CIA", project: "Parque Los Coihues", type: "INMB", motive: "Topografía", files: 2, status: "En proceso", date: "28 jul, 09:11", periodDeadline: "2026-07-31T17:00:00-04:00", waitingForPeriod: false },
 ];
 
 function FieldHint({ value, options, noun }: { value: string; options: string[]; noun: string }) {
@@ -105,6 +117,11 @@ function formatPeriodDate(value: string) {
   return new Intl.DateTimeFormat("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" }).format(date);
 }
 
+function formatFileSize(bytes: number) {
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function Home() {
   const [view, setView] = useState<"form" | "status" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
@@ -116,6 +133,9 @@ export default function Home() {
   const [provider, setProvider] = useState("");
   const [project, setProject] = useState("");
   const [motive, setMotive] = useState("");
+  const [providerCustom, setProviderCustom] = useState(false);
+  const [projectCustom, setProjectCustom] = useState(false);
+  const [motiveCustom, setMotiveCustom] = useState(false);
   const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -124,6 +144,9 @@ export default function Home() {
   const [payments, setPayments] = useState(seedPayments);
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [search, setSearch] = useState("");
+  const [publicDepartmentFilter, setPublicDepartmentFilter] = useState("Todos");
+  const [publicProviderFilter, setPublicProviderFilter] = useState("Todos");
+  const [documentPayment, setDocumentPayment] = useState<Payment | null>(null);
   const [processInfo, setProcessInfo] = useState<ProcessInfo>({
     id: "2026-07-2",
     name: "Proceso 2 · Julio 2026",
@@ -139,6 +162,7 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [sentId, setSentId] = useState("");
+  const [sentWaiting, setSentWaiting] = useState(false);
   const [dataMode, setDataMode] = useState<"loading" | "live" | "demo">("loading");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Payment | null>(null);
@@ -196,6 +220,7 @@ export default function Home() {
         const livePayments = submissionData.submissions.map((item) => ({
           ...item,
           files: Number(item.files),
+          waitingForPeriod: Boolean(Number(item.waitingForPeriod)),
           date: new Date(item.createdAt).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }),
           documents: submissionData.documents.filter((document) => document.submissionId === item.id),
         }));
@@ -206,6 +231,18 @@ export default function Home() {
       }
     }
     void hydrate();
+  }, []);
+
+  useEffect(() => {
+    const preventBrowserFileOpen = (event: DragEvent) => {
+      if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) event.preventDefault();
+    };
+    window.addEventListener("dragover", preventBrowserFileOpen);
+    window.addEventListener("drop", preventBrowserFileOpen);
+    return () => {
+      window.removeEventListener("dragover", preventBrowserFileOpen);
+      window.removeEventListener("drop", preventBrowserFileOpen);
+    };
   }, []);
 
   async function loadAdminData() {
@@ -223,6 +260,7 @@ export default function Home() {
     setPayments(data.submissions.map((item) => ({
       ...item,
       files: Number(item.files),
+      waitingForPeriod: Boolean(Number(item.waitingForPeriod)),
       date: new Date(item.createdAt).toLocaleString("es-CL", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }),
       documents: data.documents.filter((document) => document.submissionId === item.id),
     })));
@@ -329,26 +367,36 @@ export default function Home() {
   }
 
   const currentProjects = projectOptions[projectType] ?? [];
-  const filteredPayments = useMemo(() => payments.filter((payment) => {
-    const matchesStatus = statusFilter === "Todos" || payment.status === statusFilter;
+  const searchedPayments = useMemo(() => payments.filter((payment) => {
     const term = search.toLowerCase();
     const matchesSearch = !term || [payment.requester, payment.provider, payment.project, payment.id]
       .some((value) => (value ?? "").toLowerCase().includes(term))
       || payment.department.toLowerCase().includes(term);
-    return matchesStatus && matchesSearch;
-  }), [payments, search, statusFilter]);
+    return matchesSearch;
+  }), [payments, search]);
+  const filteredPayments = useMemo(() => searchedPayments.filter((payment) => {
+    if (statusFilter === "Todos") return true;
+    if (statusFilter === "En espera") return payment.waitingForPeriod;
+    return !payment.waitingForPeriod && payment.status === statusFilter;
+  }), [searchedPayments, statusFilter]);
+  const publicFilteredPayments = useMemo(() => searchedPayments.filter((payment) =>
+    (publicDepartmentFilter === "Todos" || payment.department === publicDepartmentFilter)
+    && (publicProviderFilter === "Todos" || payment.provider === publicProviderFilter)
+  ), [searchedPayments, publicDepartmentFilter, publicProviderFilter]);
+  const publicProviders = useMemo(() => Array.from(new Set(payments.map((payment) => payment.provider))).sort((a, b) => a.localeCompare(b, "es")), [payments]);
 
-  const counts = (status: Status) => payments.filter((payment) => payment.status === status).length;
+  const counts = (status: Status) => payments.filter((payment) => !payment.waitingForPeriod && payment.status === status).length;
+  const waitingCount = payments.filter((payment) => payment.waitingForPeriod).length;
   const deadlineExpired = Date.now() >= Date.parse(processInfo.deadline);
   const acceptingProcess = processInfo.isOpen && !deadlineExpired;
-  const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment);
+  const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment && !payment.waitingForPeriod);
   const departmentPeriods = Array.from(new Set(departmentPayments.map((payment) => payment.periodDeadline).filter(Boolean)))
     .sort((a, b) => Date.parse(b) - Date.parse(a));
   const effectivePeriod = departmentPeriods.includes(selectedPeriod) ? selectedPeriod : (departmentPeriods[0] ?? "");
   const periodPayments = departmentPayments.filter((payment) => payment.periodDeadline === effectivePeriod);
   const repositoryStats = departments.map((name) => ({
     name,
-    payments: payments.filter((payment) => payment.department === name),
+    payments: payments.filter((payment) => payment.department === name && !payment.waitingForPeriod),
   }));
   const visibleCatalogs = adminCatalogs.filter((entry) =>
     entry.kind === catalogKind && (!catalogSearch || entry.name.toLowerCase().includes(catalogSearch.toLowerCase()))
@@ -374,10 +422,15 @@ export default function Home() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(changes),
       });
-      const result = await response.json() as { process?: ProcessInfo; error?: string };
+      const result = await response.json() as { process?: ProcessInfo; assignedWaiting?: number; error?: string };
       if (!response.ok || !result.process) throw new Error(result.error ?? "No fue posible actualizar el proceso.");
       setProcessInfo(result.process);
       setDeadlineDraft(toDateTimeLocal(result.process.deadline));
+      if (result.assignedWaiting) {
+        setPayments((current) => current.map((payment) => payment.waitingForPeriod
+          ? { ...payment, waitingForPeriod: false, periodDeadline: result.process!.deadline }
+          : payment));
+      }
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "No fue posible actualizar el proceso.");
     } finally {
@@ -425,7 +478,7 @@ export default function Home() {
       files.forEach((file) => formData.append("files", file));
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
       const result = await response.json() as {
-        submission?: { id: string; status: Status; documents: Array<{ id: string; fileName: string; size: number }> };
+        submission?: { id: string; status: Status; waitingForPeriod: boolean; documents: Array<{ id: string; fileName: string; size: number }> };
         error?: string;
       };
       if (!response.ok || !result.submission) throw new Error(result.error ?? "No fue posible guardar la solicitud.");
@@ -440,7 +493,8 @@ export default function Home() {
         files: files.length,
         status: result.submission.status,
         date: "Ahora",
-        periodDeadline: processInfo.deadline,
+        periodDeadline: result.submission.waitingForPeriod ? "" : processInfo.deadline,
+        waitingForPeriod: result.submission.waitingForPeriod,
         documents: result.submission.documents,
       };
       setPayments((current) => [created, ...current]);
@@ -448,6 +502,7 @@ export default function Home() {
       setMotiveOptions((current) => Array.from(new Set([...current, cleanMotive])));
       setProjectOptions((current) => ({ ...current, [projectType]: Array.from(new Set([...(current[projectType] ?? []), cleanProject])) }));
       setSentId(result.submission.id);
+      setSentWaiting(result.submission.waitingForPeriod);
       setDataMode("live");
       setSent(true);
     } catch (error) {
@@ -461,6 +516,9 @@ export default function Home() {
     setProvider("");
     setProject("");
     setMotive("");
+    setProviderCustom(false);
+    setProjectCustom(false);
+    setMotiveCustom(false);
     setComment("");
     setRequester("");
     setDepartment("");
@@ -469,20 +527,33 @@ export default function Home() {
     if (fileInputRef.current) fileInputRef.current.value = "";
     setSent(false);
     setSentId("");
+    setSentWaiting(false);
     setSubmitError("");
   }
 
-  function receiveFiles(fileList: FileList | null) {
+  function addFiles(fileList: FileList | File[] | null) {
     if (!fileList) return;
-    setFiles(Array.from(fileList));
+    setFiles((current) => [...current, ...Array.from(fileList)].filter((file, index, all) =>
+      all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.lastModified === file.lastModified) === index
+    ));
     setSubmitError("");
+  }
+
+  function removeFile(target: File) {
+    setFiles((current) => current.filter((file) => file !== target));
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
   function handleFileDrop(event: React.DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     event.stopPropagation();
     setIsDraggingFiles(false);
-    receiveFiles(event.dataTransfer.files);
+    const transferredFiles = Array.from(event.dataTransfer.files);
+    const itemFiles = Array.from(event.dataTransfer.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    addFiles([...transferredFiles, ...itemFiles]);
   }
 
   return (
@@ -505,7 +576,7 @@ export default function Home() {
         <section className="page-shell form-page">
           <div className="page-heading">
             <div>
-              <span className="eyebrow">Proceso abierto</span>
+              <span className="eyebrow">{acceptingProcess ? "Proceso abierto" : "Recepción en espera"}</span>
               <h1>Ingreso de facturas</h1>
               <p>Completa los datos y adjunta los documentos correspondientes al proceso actual.</p>
             </div>
@@ -517,26 +588,38 @@ export default function Home() {
 
           {acceptingProcess
             ? <div className="notice"><span>i</span><p><strong>{processInfo.name}</strong> Recibiremos documentos hasta la fecha de cierre indicada.</p></div>
-            : <div className="notice process-closed-notice"><span>!</span><p><strong>Fuera de proceso de pago</strong> La recepción está cerrada. Esta factura deberá ingresarse en el próximo proceso.</p></div>}
+            : <div className="notice waiting-notice"><span>i</span><p><strong>Fuera del proceso actual</strong> Puedes cargar tus facturas normalmente. Quedarán en espera y se asignarán automáticamente cuando se abra el próximo período de pago.</p></div>}
 
           <form className="form-card" onSubmit={submitForm}>
             <div className="section-title"><span>01</span><div><h2>Datos generales</h2><p>Información para identificar y clasificar la solicitud.</p></div></div>
             <div className="form-grid">
-              <label>Quién solicita <b>*</b><input required value={requester} onChange={(event) => setRequester(event.target.value)} placeholder="Nombre y apellido" /></label>
+              <label>Quién solicita <b>*</b><select required value={requester} onChange={(event) => setRequester(event.target.value)}><option value="" disabled>Seleccionar solicitante</option>{requesters.map((item) => <option key={item}>{item}</option>)}</select></label>
               <label>Departamento <b>*</b>
                 <select required value={department} onChange={(event) => setDepartment(event.target.value)}><option value="" disabled>Seleccionar departamento</option>{departments.map((item) => <option key={item}>{item}</option>)}</select>
               </label>
-              <label className="wide">Proveedor <b>*</b><input required list="providers" value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="Buscar o escribir proveedor nuevo" /><datalist id="providers">{providerOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={provider} options={providerOptions} noun="proveedor" /></label>
+              <label className="wide">Proveedor <b>*</b>
+                <select required value={providerCustom ? "__new__" : provider} onChange={(event) => { const isNew = event.target.value === "__new__"; setProviderCustom(isNew); setProvider(isNew ? "" : event.target.value); }}><option value="" disabled>Seleccionar proveedor</option>{providerOptions.map((item) => <option key={item} value={item}>{item}</option>)}<option value="__new__">+ Agregar proveedor nuevo</option></select>
+                {providerCustom && <input autoFocus required value={provider} onChange={(event) => setProvider(event.target.value)} placeholder="Escribe el proveedor nuevo" />}
+                {providerCustom && <FieldHint value={provider} options={providerOptions} noun="proveedor" />}
+              </label>
             </div>
 
             <div className="divider" />
             <div className="section-title"><span>02</span><div><h2>Clasificación del proyecto</h2><p>Selecciona el tipo para ver los proyectos relacionados.</p></div></div>
             <fieldset className="type-field"><legend>Tipo de proyecto <b>*</b></legend><div className="type-options">
-              {Object.keys(projectsByType).map((type) => <label key={type} className={projectType === type ? "selected" : ""}><input type="radio" name="type" value={type} checked={projectType === type} onChange={() => { setProjectType(type); setProject(""); }} /><span>{type}</span></label>)}
+              {Object.keys(projectsByType).map((type) => <label key={type} className={projectType === type ? "selected" : ""}><input type="radio" name="type" value={type} checked={projectType === type} onChange={() => { setProjectType(type); setProject(""); setProjectCustom(false); }} /><span>{type}</span></label>)}
             </div></fieldset>
             <div className="form-grid">
-              <label className="wide">Proyecto <b>*</b><input required list="projects" value={project} onChange={(event) => setProject(event.target.value)} placeholder={`Buscar proyecto de ${projectType} o escribir uno nuevo`} /><datalist id="projects">{currentProjects.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={project} options={currentProjects} noun="proyecto" /></label>
-              <label className="wide">Motivo <b>*</b><input required list="motives" value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Buscar o escribir motivo nuevo" /><datalist id="motives">{motiveOptions.map((item) => <option key={item} value={item} />)}</datalist><FieldHint value={motive} options={motiveOptions} noun="motivo" /></label>
+              <label className="wide">Proyecto <b>*</b>
+                <select required value={projectCustom ? "__new__" : project} onChange={(event) => { const isNew = event.target.value === "__new__"; setProjectCustom(isNew); setProject(isNew ? "" : event.target.value); }}><option value="" disabled>Seleccionar proyecto de {projectType}</option>{currentProjects.map((item) => <option key={item} value={item}>{item}</option>)}<option value="__new__">+ Agregar proyecto nuevo</option></select>
+                {projectCustom && <input autoFocus required value={project} onChange={(event) => setProject(event.target.value)} placeholder={`Escribe el proyecto nuevo de ${projectType}`} />}
+                {projectCustom && <FieldHint value={project} options={currentProjects} noun="proyecto" />}
+              </label>
+              <label className="wide">Motivo <b>*</b>
+                <select required value={motiveCustom ? "__new__" : motive} onChange={(event) => { const isNew = event.target.value === "__new__"; setMotiveCustom(isNew); setMotive(isNew ? "" : event.target.value); }}><option value="" disabled>Seleccionar motivo</option>{motiveOptions.map((item) => <option key={item} value={item}>{item}</option>)}<option value="__new__">+ Agregar motivo nuevo</option></select>
+                {motiveCustom && <input autoFocus required value={motive} onChange={(event) => setMotive(event.target.value)} placeholder="Escribe el motivo nuevo" />}
+                {motiveCustom && <FieldHint value={motive} options={motiveOptions} noun="motivo" />}
+              </label>
               <label className="wide">Comentario <span className="optional">Opcional</span><textarea name="comment" rows={3} value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Agrega información útil para revisar el pago" /></label>
             </div>
 
@@ -549,18 +632,27 @@ export default function Home() {
               onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setIsDraggingFiles(false); }}
               onDrop={handleFileDrop}
             >
-              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => receiveFiles(event.target.files)} />
+              <input ref={fileInputRef} type="file" multiple accept=".pdf,.xlsx,.xls,.doc,.docx,.jpg,.jpeg,.png" onChange={(event) => { addFiles(event.target.files); event.target.value = ""; }} />
               <span className="upload-icon">↑</span>
               <strong>{files.length ? `${files.length} archivo${files.length > 1 ? "s" : ""} seleccionado${files.length > 1 ? "s" : ""}` : "Arrastra tus facturas aquí"}</strong>
-              <p>{files.length ? files.map((file) => file.name).join(" · ") : "o haz clic para seleccionar archivos"}</p>
+              <p>{files.length ? "Puedes seguir agregando más archivos" : "o haz clic para seleccionar archivos"}</p>
               <small>PDF, Excel, Word o imagen · Máximo 15 MB por archivo</small>
             </label>
 
+            {files.length > 0 && <div className="selected-files" aria-live="polite">
+              <div className="selected-files-heading"><strong>Archivos preparados</strong><span>{files.length} de 20</span></div>
+              {files.map((file, index) => <div className="selected-file" key={`${file.name}-${file.size}-${file.lastModified}`}>
+                <span className="selected-file-number">{index + 1}</span>
+                <div><strong>{file.name}</strong><small>{formatFileSize(file.size)}</small></div>
+                <button type="button" onClick={() => removeFile(file)} aria-label={`Quitar ${file.name}`} title="Quitar archivo">×</button>
+              </div>)}
+            </div>}
+
             {submitError && <div className="form-error"><span>!</span>{submitError}</div>}
-            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><div className="form-action-buttons"><button type="button" className="secondary clear-form" onClick={resetForm} disabled={submitting}>Limpiar formulario</button><button type="submit" className="primary" disabled={submitting || !acceptingProcess}>{!acceptingProcess ? "Proceso cerrado" : submitting ? "Guardando..." : "Enviar facturas"} <span>→</span></button></div></div>
+            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><div className="form-action-buttons"><button type="button" className="secondary clear-form" onClick={resetForm} disabled={submitting}>Limpiar formulario</button><button type="submit" className="primary" disabled={submitting}>{submitting ? "Guardando..." : acceptingProcess ? "Enviar facturas" : "Guardar en espera"} <span>→</span></button></div></div>
           </form>
 
-          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">¡Facturas recibidas!</h2><p>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</p><div className="modal-actions"><button className="secondary" onClick={() => { setSent(false); setView("status"); }}>Consultar estado</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
+          {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">{sentWaiting ? "¡Facturas guardadas en espera!" : "¡Facturas recibidas!"}</h2><p>{sentWaiting ? <>Tu solicitud <strong>{sentId}</strong> quedó protegida y será asignada automáticamente al próximo período de pago.</> : <>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</>}</p><div className="modal-actions"><button className="secondary" onClick={() => { setSent(false); setView("status"); }}>Consultar estado</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
         </section>
       ) : view === "status" ? (
         <section className="page-shell status-page">
@@ -568,31 +660,35 @@ export default function Home() {
             <div><span className="eyebrow">Seguimiento público</span><h1>Estado de facturas</h1><p>Busca una solicitud para revisar en qué etapa se encuentra.</p></div>
             <div className="repository-summary"><span>⌕</span><div><small>Proceso actual</small><strong>{processInfo.name}</strong></div></div>
           </div>
-          <div className="status-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por número, proveedor, proyecto o departamento" /></div>
+          <div className="status-filters">
+            <div className="status-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por número, proveedor o proyecto" /></div>
+            <label>Departamento<select value={publicDepartmentFilter} onChange={(event) => setPublicDepartmentFilter(event.target.value)}><option>Todos</option>{departments.map((item) => <option key={item}>{item}</option>)}</select></label>
+            <label>Proveedor<select value={publicProviderFilter} onChange={(event) => setPublicProviderFilter(event.target.value)}><option>Todos</option>{publicProviders.map((item) => <option key={item}>{item}</option>)}</select></label>
+          </div>
           <div className="table-card public-status-card">
             <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Estado</th></tr></thead><tbody>
-              {filteredPayments.map((payment) => <tr key={payment.id}>
+              {publicFilteredPayments.map((payment) => <tr key={payment.id}>
                 <td><strong>{payment.id}</strong><small>{payment.date}</small></td>
                 <td><strong>{payment.provider}</strong></td>
                 <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
                 <td>{payment.department}</td>
-                <td><strong>{payment.files} archivo{payment.files === 1 ? "" : "s"}</strong><small>{payment.documents?.map((document) => document.fileName).join(" · ")}</small></td>
-                <td><span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span></td>
+                <td><button className="files-button" onClick={() => setDocumentPayment(payment)}>▤ {payment.files} archivo{payment.files === 1 ? "" : "s"}<small>Ver documentos</small></button></td>
+                <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span>}</td>
               </tr>)}
-              {!filteredPayments.length && <tr><td colSpan={6} className="empty-state">No encontramos solicitudes con esa búsqueda.</td></tr>}
+              {!publicFilteredPayments.length && <tr><td colSpan={6} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
-            <div className="table-footer"><span>Mostrando {filteredPayments.length} solicitudes</span></div>
+            <div className="table-footer"><span>Mostrando {publicFilteredPayments.length} solicitudes</span></div>
           </div>
         </section>
       ) : view === "admin" ? (
         <section className="page-shell admin-page">
           <div className="admin-heading">
             <div><span className="eyebrow">Administración</span><h1>{processInfo.name}</h1><p>Revisa y actualiza el estado de las facturas recibidas.</p></div>
-            <div className="process-control"><div><span className={`dot ${acceptingProcess ? "" : "closed"}`} /><small>Recepción</small><strong>{acceptingProcess ? "Abierta" : "Cerrada"}</strong></div><button disabled={savingProcess || (deadlineExpired && processInfo.isOpen)} className={acceptingProcess ? "close-process" : "open-process"} onClick={() => void updateProcess({ isOpen: !acceptingProcess })}>{acceptingProcess ? "Cerrar proceso" : deadlineExpired && processInfo.isOpen ? "Cambia la fecha" : "Reabrir proceso"}</button></div>
+            <div className="process-control"><div><span className={`dot ${acceptingProcess ? "" : "closed"}`} /><small>Período de pago</small><strong>{acceptingProcess ? "Abierto" : `${waitingCount} en espera`}</strong></div><button disabled={savingProcess || (deadlineExpired && processInfo.isOpen)} className={acceptingProcess ? "close-process" : "open-process"} onClick={() => void updateProcess({ isOpen: !acceptingProcess })}>{acceptingProcess ? "Cerrar proceso" : deadlineExpired && processInfo.isOpen ? "Cambia la fecha" : "Abrir período"}</button></div>
           </div>
 
           <div className="deadline-editor">
-            <div><span className="calendar-icon">{new Date(processInfo.deadline).getDate()}</span><div><strong>Fecha y hora de cierre</strong><small>Después de esta fecha el formulario dejará de aceptar facturas.</small></div></div>
+            <div><span className="calendar-icon">{new Date(processInfo.deadline).getDate()}</span><div><strong>Fecha y hora de cierre</strong><small>Después de esta fecha las facturas nuevas quedarán en espera.</small></div></div>
             <label>Fecha de cierre<input type="datetime-local" value={deadlineDraft} onChange={(event) => setDeadlineDraft(event.target.value)} /></label>
             <button disabled={savingProcess || !deadlineDraft} onClick={() => void updateProcess({ deadline: new Date(deadlineDraft).toISOString() })}>{savingProcess ? "Guardando..." : "Guardar fecha"}</button>
           </div>
@@ -624,6 +720,7 @@ export default function Home() {
 
           <div className="stats-grid">
             <button onClick={() => setStatusFilter("Todos")} className={statusFilter === "Todos" ? "selected" : ""}><span className="stat-icon all">▦</span><div><strong>{payments.length}</strong><small>Total recibidas</small></div></button>
+            <button onClick={() => setStatusFilter("En espera")} className={statusFilter === "En espera" ? "selected" : ""}><span className="stat-icon waiting">⌛</span><div><strong>{waitingCount}</strong><small>En espera</small></div></button>
             <button onClick={() => setStatusFilter("Recibida")} className={statusFilter === "Recibida" ? "selected" : ""}><span className="stat-icon received">↓</span><div><strong>{counts("Recibida")}</strong><small>Recibidas</small></div></button>
             <button onClick={() => setStatusFilter("En proceso")} className={statusFilter === "En proceso" ? "selected" : ""}><span className="stat-icon process">◷</span><div><strong>{counts("En proceso")}</strong><small>En proceso</small></div></button>
             <button onClick={() => setStatusFilter("Pendiente")} className={statusFilter === "Pendiente" ? "selected" : ""}><span className="stat-icon pending">!</span><div><strong>{counts("Pendiente")}</strong><small>Pendientes</small></div></button>
@@ -633,7 +730,7 @@ export default function Home() {
           <div className="table-card">
             <div className="table-toolbar">
               <div className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar proveedor, proyecto o solicitante" /></div>
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todos</option><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todos</option><option>En espera</option><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>
               <button className="export-button">⇩ Exportar Excel</button>
             </div>
             <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Estado</th><th /></tr></thead><tbody>
@@ -642,8 +739,8 @@ export default function Home() {
                 <td><strong>{payment.provider}</strong><small>{payment.motive}</small></td>
                 <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
                 <td>{payment.department}</td>
-                <td><button className="files-button">▤ {payment.files} archivo{payment.files > 1 ? "s" : ""}</button></td>
-                <td><select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => updateStatus(payment.id, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select></td>
+                <td><button className="files-button" onClick={() => setDocumentPayment(payment)}>▤ {payment.files} archivo{payment.files > 1 ? "s" : ""}<small>Ver documentos</small></button></td>
+                <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => updateStatus(payment.id, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>}</td>
                 <td><div className="row-actions">
                   <button className="more" aria-label={`Más opciones para ${payment.id}`} aria-expanded={openMenuId === payment.id} onClick={() => setOpenMenuId((current) => current === payment.id ? null : payment.id)}>•••</button>
                   {openMenuId === payment.id && <div className="action-menu"><button onClick={() => { setPendingDelete(payment); setOpenMenuId(null); setDeleteError(""); }}><span>×</span> Eliminar registro</button></div>}
@@ -759,6 +856,24 @@ export default function Home() {
             <button type="submit" className="primary" disabled={loggingIn || !password}>{loggingIn ? "Ingresando..." : "Ingresar"}</button>
           </div>
         </form>
+      </div>}
+
+      {documentPayment && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="documents-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setDocumentPayment(null); }}>
+        <div className="success-modal document-modal">
+          <span className="document-modal-icon">▤</span>
+          <h2 id="documents-title">Documentos de {documentPayment.id}</h2>
+          <p><strong>{documentPayment.provider}</strong> · {documentPayment.project}</p>
+          <div className="document-modal-list">
+            {(documentPayment.documents ?? []).map((document, index) => <div className="document-modal-row" key={document.id || `${document.fileName}-${index}`}>
+              <span className="pdf-icon">{document.fileName.split(".").pop()?.slice(0, 4).toUpperCase() || "DOC"}</span>
+              <div><strong>{document.fileName}</strong><small>{formatFileSize(document.size)}</small></div>
+              {isAdmin && document.id ? <a href={`/api/files/${encodeURIComponent(document.id)}?view=1`} target="_blank" rel="noreferrer">Abrir</a> : <span className="document-loaded">✓ Cargado</span>}
+            </div>)}
+            {!documentPayment.documents?.length && <div className="empty-catalog">No hay nombres de documentos disponibles.</div>}
+          </div>
+          {!isAdmin && <div className="document-privacy"><span>i</span> Por seguridad, en la consulta pública se muestran los nombres. Los archivos se abren desde el panel administrativo o el repositorio.</div>}
+          <div className="modal-actions"><button type="button" className="primary" onClick={() => setDocumentPayment(null)}>Cerrar</button></div>
+        </div>
       </div>}
     </main>
   );

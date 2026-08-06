@@ -13,18 +13,19 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!row) return new Response("Archivo no encontrado.", { status: 404 });
   const object = await env.FILES.get(row.objectKey);
   if (!object) return new Response("Archivo no disponible.", { status: 404 });
+  const inline = new URL(request.url).searchParams.get("view") === "1";
 
   return new Response(object.body, {
     headers: {
       "content-type": row.contentType,
       "content-length": String(object.size),
-      "content-disposition": contentDisposition(row.fileName),
+      "content-disposition": contentDisposition(row.fileName, inline),
       "cache-control": "private, no-store",
     },
   });
 }
 
-function contentDisposition(fileName: string) {
+function contentDisposition(fileName: string, inline = false) {
   const fallback = fileName.replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  return `${inline ? "inline" : "attachment"}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }

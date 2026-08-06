@@ -23,6 +23,7 @@ export const submissions = sqliteTable("submissions", {
   id: text("id").primaryKey(),
   processId: text("process_id").notNull().default("2026-07-2"),
   paymentPeriod: text("payment_period").notNull().default("2026-07-31T17:00:00-04:00"),
+  waitingForPeriod: integer("waiting_for_period", { mode: "boolean" }).notNull().default(false),
   requester: text("requester").notNull(),
   requesterEmail: text("requester_email"),
   department: text("department").notNull(),
@@ -39,6 +40,7 @@ export const submissions = sqliteTable("submissions", {
   index("submissions_status_idx").on(table.status),
   index("submissions_process_idx").on(table.processId),
   index("submissions_department_period_idx").on(table.department, table.paymentPeriod),
+  index("submissions_waiting_idx").on(table.waitingForPeriod),
 ]);
 
 export const documents = sqliteTable("documents", {

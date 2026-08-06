@@ -29,8 +29,20 @@ export async function PATCH(request: Request) {
     WHERE id = ?
   `).bind(deadline, isOpen ? 1 : 0, ACTIVE_PROCESS_ID).run();
 
+  let assignedWaiting = 0;
+  const activatesPeriod = isOpen && Date.now() < Date.parse(deadline)
+    && (deadline !== current.deadline || !Boolean(current.isOpen));
+  if (activatesPeriod) {
+    const assignment = await env.DB.prepare(`
+      UPDATE submissions
+      SET payment_period = ?, waiting_for_period = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE waiting_for_period = 1
+    `).bind(deadline).run();
+    assignedWaiting = Number(assignment.meta.changes ?? 0);
+  }
+
   const updated = await readProcess();
-  return Response.json({ process: serialize(updated) });
+  return Response.json({ process: serialize(updated), assignedWaiting });
 }
 
 async function ensureProcess() {
