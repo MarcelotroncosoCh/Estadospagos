@@ -146,6 +146,7 @@ export default function Home() {
   const [search, setSearch] = useState("");
   const [publicDepartmentFilter, setPublicDepartmentFilter] = useState("Todos");
   const [publicProviderFilter, setPublicProviderFilter] = useState("Todos");
+  const [publicSelectedPeriod, setPublicSelectedPeriod] = useState("");
   const [documentPayment, setDocumentPayment] = useState<Payment | null>(null);
   const [processInfo, setProcessInfo] = useState<ProcessInfo>({
     id: "2026-07-2",
@@ -158,6 +159,7 @@ export default function Home() {
   const [savingProcess, setSavingProcess] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState("Ingeniería");
   const [selectedPeriod, setSelectedPeriod] = useState("");
+  const [adminSelectedPeriod, setAdminSelectedPeriod] = useState("");
   const [repositoryNotice, setRepositoryNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -374,29 +376,48 @@ export default function Home() {
       || payment.department.toLowerCase().includes(term);
     return matchesSearch;
   }), [payments, search]);
+  const adminPeriods = useMemo(() => Array.from(new Set([
+    processInfo.deadline,
+    ...payments
+      .filter((payment) => !payment.waitingForPeriod && payment.periodDeadline)
+      .map((payment) => payment.periodDeadline),
+  ].filter(Boolean))).sort((a, b) => Date.parse(b) - Date.parse(a)), [payments, processInfo.deadline]);
+  const effectiveAdminPeriod = adminPeriods.includes(adminSelectedPeriod) ? adminSelectedPeriod : (adminPeriods[0] ?? "");
+  const effectivePublicPeriod = publicSelectedPeriod === "__waiting__"
+    ? "__waiting__"
+    : adminPeriods.includes(publicSelectedPeriod) ? publicSelectedPeriod : (adminPeriods[0] ?? "");
+  const adminPeriodPayments = useMemo(() => payments.filter((payment) =>
+    !payment.waitingForPeriod && payment.periodDeadline === effectiveAdminPeriod
+  ), [payments, effectiveAdminPeriod]);
   const filteredPayments = useMemo(() => searchedPayments.filter((payment) => {
-    if (statusFilter === "Todos") return true;
     if (statusFilter === "En espera") return payment.waitingForPeriod;
-    return !payment.waitingForPeriod && payment.status === statusFilter;
-  }), [searchedPayments, statusFilter]);
+    if (payment.waitingForPeriod || payment.periodDeadline !== effectiveAdminPeriod) return false;
+    return statusFilter === "Todos" || payment.status === statusFilter;
+  }), [searchedPayments, statusFilter, effectiveAdminPeriod]);
   const publicFilteredPayments = useMemo(() => searchedPayments.filter((payment) =>
     (publicDepartmentFilter === "Todos" || payment.department === publicDepartmentFilter)
     && (publicProviderFilter === "Todos" || payment.provider === publicProviderFilter)
-  ), [searchedPayments, publicDepartmentFilter, publicProviderFilter]);
+    && (effectivePublicPeriod === "__waiting__"
+      ? payment.waitingForPeriod
+      : !payment.waitingForPeriod && payment.periodDeadline === effectivePublicPeriod)
+  ), [searchedPayments, publicDepartmentFilter, publicProviderFilter, effectivePublicPeriod]);
   const publicProviders = useMemo(() => Array.from(new Set(payments.map((payment) => payment.provider))).sort((a, b) => a.localeCompare(b, "es")), [payments]);
 
-  const counts = (status: Status) => payments.filter((payment) => !payment.waitingForPeriod && payment.status === status).length;
+  const counts = (status: Status) => adminPeriodPayments.filter((payment) => payment.status === status).length;
   const waitingCount = payments.filter((payment) => payment.waitingForPeriod).length;
   const deadlineExpired = Date.now() >= Date.parse(processInfo.deadline);
   const acceptingProcess = processInfo.isOpen && !deadlineExpired;
   const departmentPayments = payments.filter((payment) => payment.department === selectedDepartment && !payment.waitingForPeriod);
-  const departmentPeriods = Array.from(new Set(departmentPayments.map((payment) => payment.periodDeadline).filter(Boolean)))
-    .sort((a, b) => Date.parse(b) - Date.parse(a));
-  const effectivePeriod = departmentPeriods.includes(selectedPeriod) ? selectedPeriod : (departmentPeriods[0] ?? "");
+  const repositoryPeriods = adminPeriods;
+  const effectivePeriod = repositoryPeriods.includes(selectedPeriod) ? selectedPeriod : (repositoryPeriods[0] ?? "");
   const periodPayments = departmentPayments.filter((payment) => payment.periodDeadline === effectivePeriod);
   const repositoryStats = departments.map((name) => ({
     name,
-    payments: payments.filter((payment) => payment.department === name && !payment.waitingForPeriod),
+    payments: payments.filter((payment) =>
+      payment.department === name
+      && !payment.waitingForPeriod
+      && payment.periodDeadline === effectivePeriod
+    ),
   }));
   const visibleCatalogs = adminCatalogs.filter((entry) =>
     entry.kind === catalogKind && (!catalogSearch || entry.name.toLowerCase().includes(catalogSearch.toLowerCase()))
@@ -430,6 +451,8 @@ export default function Home() {
         setPayments((current) => current.map((payment) => payment.waitingForPeriod
           ? { ...payment, waitingForPeriod: false, periodDeadline: result.process!.deadline }
           : payment));
+        setAdminSelectedPeriod(result.process.deadline);
+        setStatusFilter("Todos");
       }
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : "No fue posible actualizar el proceso.");
@@ -662,6 +685,7 @@ export default function Home() {
           </div>
           <div className="status-filters">
             <div className="status-search"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por número, proveedor o proyecto" /></div>
+            <label>Período de pago<select value={effectivePublicPeriod} onChange={(event) => setPublicSelectedPeriod(event.target.value)}><option value="__waiting__">En espera del próximo período</option>{adminPeriods.map((period) => <option key={period} value={period}>Período {formatPeriodDate(period)}</option>)}</select></label>
             <label>Departamento<select value={publicDepartmentFilter} onChange={(event) => setPublicDepartmentFilter(event.target.value)}><option>Todos</option>{departments.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Proveedor<select value={publicProviderFilter} onChange={(event) => setPublicProviderFilter(event.target.value)}><option>Todos</option>{publicProviders.map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
@@ -677,7 +701,7 @@ export default function Home() {
               </tr>)}
               {!publicFilteredPayments.length && <tr><td colSpan={6} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
-            <div className="table-footer"><span>Mostrando {publicFilteredPayments.length} solicitudes</span></div>
+            <div className="table-footer"><span>Mostrando {publicFilteredPayments.length} solicitudes · {effectivePublicPeriod === "__waiting__" ? "En espera del próximo período" : `Período ${formatPeriodDate(effectivePublicPeriod)}`}</span></div>
           </div>
         </section>
       ) : view === "admin" ? (
@@ -718,8 +742,19 @@ export default function Home() {
             </div>}
           </div>
 
+          <div className="admin-period-filter">
+            <div className="admin-period-copy">
+              <span className="calendar-icon">{effectiveAdminPeriod ? new Date(effectiveAdminPeriod).getDate() : "—"}</span>
+              <div><small>Período seleccionado</small><strong>{effectiveAdminPeriod ? `Período de pago ${formatPeriodDate(effectiveAdminPeriod)}` : "Sin períodos registrados"}</strong><p>Los contadores y la tabla muestran solamente las facturas de esta fecha.</p></div>
+            </div>
+            <label>Historial de períodos<select value={effectiveAdminPeriod} disabled={!adminPeriods.length || statusFilter === "En espera"} onChange={(event) => { setAdminSelectedPeriod(event.target.value); setStatusFilter("Todos"); }}>
+              {adminPeriods.map((period) => <option key={period} value={period}>Período de pago {formatPeriodDate(period)}</option>)}
+            </select></label>
+            {statusFilter === "En espera" && <div className="admin-period-waiting"><span>⌛</span><div><strong>Bandeja en espera</strong><small>No pertenece a ningún período hasta abrir una nueva fecha.</small></div></div>}
+          </div>
+
           <div className="stats-grid">
-            <button onClick={() => setStatusFilter("Todos")} className={statusFilter === "Todos" ? "selected" : ""}><span className="stat-icon all">▦</span><div><strong>{payments.length}</strong><small>Total recibidas</small></div></button>
+            <button onClick={() => setStatusFilter("Todos")} className={statusFilter === "Todos" ? "selected" : ""}><span className="stat-icon all">▦</span><div><strong>{adminPeriodPayments.length}</strong><small>Total del período</small></div></button>
             <button onClick={() => setStatusFilter("En espera")} className={statusFilter === "En espera" ? "selected" : ""}><span className="stat-icon waiting">⌛</span><div><strong>{waitingCount}</strong><small>En espera</small></div></button>
             <button onClick={() => setStatusFilter("Recibida")} className={statusFilter === "Recibida" ? "selected" : ""}><span className="stat-icon received">↓</span><div><strong>{counts("Recibida")}</strong><small>Recibidas</small></div></button>
             <button onClick={() => setStatusFilter("En proceso")} className={statusFilter === "En proceso" ? "selected" : ""}><span className="stat-icon process">◷</span><div><strong>{counts("En proceso")}</strong><small>En proceso</small></div></button>
@@ -748,7 +783,7 @@ export default function Home() {
               </tr>)}
               {!filteredPayments.length && <tr><td colSpan={7} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
-            <div className="table-footer"><span>Mostrando {filteredPayments.length} de {payments.length} solicitudes</span><div><button disabled>‹</button><button className="current">1</button><button disabled>›</button></div></div>
+            <div className="table-footer"><span>{statusFilter === "En espera" ? `Mostrando ${filteredPayments.length} facturas en espera` : `Mostrando ${filteredPayments.length} de ${adminPeriodPayments.length} solicitudes del período`}</span><div><button disabled>‹</button><button className="current">1</button><button disabled>›</button></div></div>
           </div>
 
           {pendingDelete && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-title"><div className="success-modal delete-modal">
@@ -766,12 +801,12 @@ export default function Home() {
             <div className="repository-summary"><span>▣</span><div><small>Proceso actual</small><strong>{processInfo.name}</strong></div></div>
           </div>
 
-          <div className="repository-explainer"><span>i</span><p>Cada factura se almacena automáticamente por departamento y período de pago. Selecciona la fecha de cierre para revisar o descargar solo ese grupo.</p></div>
+          <div className="repository-explainer"><span>i</span><p>Las cantidades de las carpetas corresponden únicamente al período de pago seleccionado: <strong>{effectivePeriod ? formatPeriodDate(effectivePeriod) : "sin período"}</strong>.</p></div>
 
           <div className="folder-grid">
             {repositoryStats.map(({ name, payments: departmentItems }) => {
               const fileCount = departmentItems.reduce((total, item) => total + item.files, 0);
-              return <button key={name} className={`folder-card ${selectedDepartment === name ? "selected" : ""}`} onClick={() => { setSelectedDepartment(name); setSelectedPeriod(""); }}>
+              return <button key={name} className={`folder-card ${selectedDepartment === name ? "selected" : ""}`} onClick={() => setSelectedDepartment(name)}>
                 <span className="folder-shape"><i /></span>
                 <div><strong>{name}</strong><small>{departmentItems.length} solicitudes · {fileCount} archivos</small></div>
                 <span className="folder-arrow">→</span>
@@ -780,9 +815,9 @@ export default function Home() {
           </div>
 
           <div className="period-section">
-            <div className="period-heading"><div><span className="eyebrow">{selectedDepartment}</span><h2>Períodos de pago</h2></div><small>{departmentPeriods.length} período{departmentPeriods.length === 1 ? "" : "s"}</small></div>
-            {departmentPeriods.length ? <div className="period-grid">
-              {departmentPeriods.map((period) => {
+            <div className="period-heading"><div><span className="eyebrow">{selectedDepartment}</span><h2>Períodos de pago</h2></div><small>{repositoryPeriods.length} período{repositoryPeriods.length === 1 ? "" : "s"}</small></div>
+            {repositoryPeriods.length ? <div className="period-grid">
+              {repositoryPeriods.map((period) => {
                 const items = departmentPayments.filter((payment) => payment.periodDeadline === period);
                 const fileCount = items.reduce((total, item) => total + item.files, 0);
                 return <button key={period} className={`period-card ${effectivePeriod === period ? "selected" : ""}`} onClick={() => setSelectedPeriod(period)}>
@@ -791,7 +826,7 @@ export default function Home() {
                   <span className="folder-arrow">→</span>
                 </button>;
               })}
-            </div> : <div className="empty-periods">Este departamento todavía no tiene períodos de pago.</div>}
+            </div> : <div className="empty-periods">Todavía no existen períodos de pago.</div>}
           </div>
 
           <div className="repository-card">
