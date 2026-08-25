@@ -1,7 +1,15 @@
 import { env } from "cloudflare:workers";
 import { requireAdmin } from "../../admin-auth";
 
-const RECIPIENTS = ["mtroncoso@malpo.cl"];
+const RECIPIENTS = [
+  "cgonzalez@malpo.cl",
+  "lpena@malpo.cl",
+  "rnorambuena@malpo.cl",
+  "jarenas@malpo.cl",
+  "acifuentes@malpo.cl",
+  "rtorres@malpo.cl",
+  "mjtroncoso@malpo.cl",
+];
 
 type NotificationRow = {
   id: string;
