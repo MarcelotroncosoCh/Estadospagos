@@ -209,8 +209,10 @@ td { padding: 14px; border-bottom: 1px solid #e8eeee; font-size: 11px; color: #5
 td strong, td small { display: block; }
 td strong { color: #233e46; font-size: 11px; }
 td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
-.files-button, .more { border: 0; background: none; color: var(--brand); font-size: 10px; cursor: pointer; white-space: nowrap; }
+.files-button, .comment-button, .more { border: 0; background: none; color: var(--brand); font-size: 10px; cursor: pointer; white-space: nowrap; }
 .files-button small { display: block; margin-top: 3px; color: #8b999d; font-size: 8px; }
+.comment-button { padding: 7px 9px; border: 1px solid #bad5d2; border-radius: 8px; background: #f1f9f8; font-weight: 750; }
+.no-comment { color: #98a5a8; font-size: 9px; white-space: nowrap; }
 .more { color: #758489; font-weight: 800; }
 .row-actions { position: relative; display: inline-block; }
 .action-menu { position: absolute; right: 0; top: 28px; width: 155px; padding: 5px; border: 1px solid #e4dede; border-radius: 9px; background: white; box-shadow: 0 12px 28px rgba(35,54,58,.16); z-index: 8; }
@@ -238,7 +240,7 @@ td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
 .status-search { position: relative; max-width: none; }
 .status-search span { position: absolute; left: 14px; top: 10px; color: #7c8d90; font-size: 20px; }
 .status-search input { width: 100%; height: 44px; border: 1px solid #d3dfe0; border-radius: 11px; background: white; padding: 0 14px 0 40px; color: var(--ink); font-size: 12px; box-shadow: 0 4px 14px rgba(31,63,69,.04); }
-.public-status-card table { min-width: 900px; }
+.public-status-card table { min-width: 1040px; }
 .public-status-card td:nth-child(5) small { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .document-modal { width: min(620px, 100%); }
 .document-modal-icon { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 17px; background: var(--aqua); color: var(--brand); font-size: 22px; }
@@ -250,6 +252,9 @@ td small { color: #94a0a4; font-size: 9px; margin-top: 4px; }
 .document-modal-row strong { color: #334d53; font-size: 10px; }
 .document-modal-row small { margin-top: 4px; color: #8f9ca0; font-size: 8px; }
 .document-modal-row a { border: 1px solid #bad5d2; border-radius: 8px; background: #f1f9f8; color: var(--brand); padding: 8px 11px; text-decoration: none; font-size: 9px; font-weight: 750; }
+.comment-modal { width: min(540px, 100%); }
+.comment-modal-icon { width: 54px; height: 54px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto 17px; background: var(--aqua); color: var(--brand); font-size: 22px; }
+.comment-text { margin: 20px 0 4px; padding: 18px; border: 1px solid #dce5e5; border-radius: 11px; background: #f8fbfb; color: #334d53; font-size: 12px; line-height: 1.65; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
 .document-loaded { color: #56816f; font-size: 9px; font-weight: 700; }
 .document-privacy { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px 12px; border-radius: 9px; background: #f2f7f7; color: #667a7e; text-align: left; font-size: 9px; line-height: 1.45; }
 .document-privacy span { width: 19px; height: 19px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; background: var(--brand); color: white; font-family: Georgia, serif; }

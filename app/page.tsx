@@ -79,6 +79,7 @@ type Payment = {
   project: string;
   type: string;
   motive: string;
+  comment?: string | null;
   files: number;
   status: Status;
   date: string;
@@ -149,6 +150,7 @@ export default function Home() {
   const [publicProviderFilter, setPublicProviderFilter] = useState("Todos");
   const [publicSelectedPeriod, setPublicSelectedPeriod] = useState("");
   const [documentPayment, setDocumentPayment] = useState<Payment | null>(null);
+  const [commentPayment, setCommentPayment] = useState<Payment | null>(null);
   const [processInfo, setProcessInfo] = useState<ProcessInfo>({
     id: "2026-07-2",
     name: "Proceso 2 · Julio 2026",
@@ -514,6 +516,7 @@ export default function Home() {
         project: cleanProject,
         type: projectType,
         motive: cleanMotive,
+        comment: comment.trim(),
         files: files.length,
         status: result.submission.status,
         date: "Ahora",
@@ -691,16 +694,19 @@ export default function Home() {
             <label>Proveedor<select value={publicProviderFilter} onChange={(event) => setPublicProviderFilter(event.target.value)}><option>Todos</option>{publicProviders.map((item) => <option key={item}>{item}</option>)}</select></label>
           </div>
           <div className="table-card public-status-card">
-            <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Estado</th></tr></thead><tbody>
+            <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Comentarios</th><th>Estado</th></tr></thead><tbody>
               {publicFilteredPayments.map((payment) => <tr key={payment.id}>
                 <td><strong>{payment.id}</strong><small>{payment.date}</small></td>
                 <td><strong>{payment.provider}</strong></td>
                 <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
                 <td>{payment.department}</td>
                 <td><button className="files-button" onClick={() => setDocumentPayment(payment)}>▤ {payment.files} archivo{payment.files === 1 ? "" : "s"}<small>Ver documentos</small></button></td>
+                <td>{payment.comment?.trim()
+                  ? <button className="comment-button" onClick={() => setCommentPayment(payment)}>Ver comentario</button>
+                  : <span className="no-comment">Sin comentario</span>}</td>
                 <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <span className={`badge ${payment.status.toLowerCase().replace(" ", "-")}`}>{payment.status}</span>}</td>
               </tr>)}
-              {!publicFilteredPayments.length && <tr><td colSpan={6} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
+              {!publicFilteredPayments.length && <tr><td colSpan={7} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
             <div className="table-footer"><span>Mostrando {publicFilteredPayments.length} solicitudes · {effectivePublicPeriod === "__waiting__" ? "En espera del próximo período" : `Período ${formatPeriodDate(effectivePublicPeriod)}`}</span></div>
           </div>
@@ -909,6 +915,16 @@ export default function Home() {
           </div>
           {!isAdmin && <div className="document-privacy"><span>i</span> Por seguridad, en la consulta pública se muestran los nombres. Los archivos se abren desde el panel administrativo o el repositorio.</div>}
           <div className="modal-actions"><button type="button" className="primary" onClick={() => setDocumentPayment(null)}>Cerrar</button></div>
+        </div>
+      </div>}
+
+      {commentPayment && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="comment-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setCommentPayment(null); }}>
+        <div className="success-modal comment-modal">
+          <span className="comment-modal-icon">✎</span>
+          <h2 id="comment-title">Comentario de {commentPayment.id}</h2>
+          <p><strong>{commentPayment.provider}</strong> · {commentPayment.project}</p>
+          <div className="comment-text">{commentPayment.comment}</div>
+          <div className="modal-actions"><button type="button" className="primary" onClick={() => setCommentPayment(null)}>Cerrar</button></div>
         </div>
       </div>}
     </main>
