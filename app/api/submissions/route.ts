@@ -1,5 +1,12 @@
 import { env } from "cloudflare:workers";
 import { requireAdmin } from "../../admin-auth";
+import {
+  type AiBinding,
+  bestSuggestion,
+  isAmountDocument,
+  readAmount,
+  suggestionResponse,
+} from "../../amount-detection";
 
 const VALID_DEPARTMENTS = new Set([
   "Arquitectura",
@@ -12,6 +19,8 @@ const VALID_DEPARTMENTS = new Set([
 const VALID_TYPES = new Set(["DS19", "DS49", "INMB", "G. Proyectos"]);
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_FILES = 20;
+const MAX_OCR_PAGES = 12;
+const MAX_OCR_PAGE_SIZE = 4 * 1024 * 1024;
 const SAFE_STORAGE_LIMIT = 8 * 1024 * 1024 * 1024;
 
 export async function GET(request: Request) {
@@ -57,6 +66,8 @@ export async function POST(request: Request) {
   const motive = text(form, "motive");
   const comment = text(form, "comment");
   const files = form.getAll("files").filter((value): value is File => value instanceof File && value.size > 0);
+  const ocrPages = form.getAll("ocrPages").filter((value): value is File => value instanceof File && value.size > 0);
+  const ocrSourceNames = form.getAll("ocrSourceNames").map(String);
 
   if (!requester || !department || !provider || !projectType || !project || !motive) {
     return Response.json({ error: "Faltan campos obligatorios." }, { status: 400 });
@@ -66,6 +77,9 @@ export async function POST(request: Request) {
   }
   if (!files.length || files.length > MAX_FILES || files.some((file) => file.size > MAX_FILE_SIZE)) {
     return Response.json({ error: "Adjunta entre 1 y 20 archivos, de máximo 15 MB cada uno." }, { status: 400 });
+  }
+  if (ocrPages.length > MAX_OCR_PAGES || ocrPages.some((file) => file.size > MAX_OCR_PAGE_SIZE)) {
+    return Response.json({ error: "No fue posible preparar las facturas para la lectura automática." }, { status: 400 });
   }
   const storage = await env.DB.prepare(`
     SELECT COALESCE(SUM(size), 0) AS usedBytes FROM documents
@@ -79,6 +93,7 @@ export async function POST(request: Request) {
   }
 
   const id = `PG-${Date.now().toString(36).toUpperCase()}`;
+  const detectedAmount = await detectSubmissionAmount(files, ocrPages, ocrSourceNames);
   const uploadedKeys: string[] = [];
   const documentRows: Array<{ id: string; file: File; key: string }> = [];
 
@@ -99,8 +114,8 @@ export async function POST(request: Request) {
       env.DB.prepare(`
         INSERT INTO submissions (
           id, process_id, payment_period, waiting_for_period, requester, requester_email, department, provider,
-          project_type, project, motive, comment, status
-        ) VALUES (?, '2026-07-2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Recibida')
+          project_type, project, motive, comment, status, paid_amount
+        ) VALUES (?, '2026-07-2', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Recibida', ?)
       `).bind(
         id,
         waitingForPeriod ? "" : activeProcess.deadline,
@@ -113,6 +128,7 @@ export async function POST(request: Request) {
         project,
         motive,
         comment,
+        detectedAmount,
       ),
       ...documentRows.map(({ id: documentId, file, key }) =>
         env.DB.prepare(`
@@ -129,6 +145,7 @@ export async function POST(request: Request) {
       submission: {
         id,
         status: "Recibida",
+        paidAmount: detectedAmount,
         waitingForPeriod,
         documents: documentRows.map((item) => ({
           id: item.id,
@@ -142,6 +159,37 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "No fue posible guardar la solicitud.";
     return Response.json({ error: message }, { status: 500 });
   }
+}
+
+async function detectSubmissionAmount(files: File[], pages: File[], sourceNames: string[]) {
+  const ai = (env as unknown as { AI?: AiBinding }).AI;
+  if (!ai) return null;
+
+  const pagesBySource = new Map<string, File[]>();
+  pages.forEach((page, index) => {
+    const sourceName = sourceNames[index];
+    if (!sourceName) return;
+    pagesBySource.set(sourceName, [...(pagesBySource.get(sourceName) ?? []), page]);
+  });
+
+  const suggestions = [];
+  for (const file of files) {
+    if (!isAmountDocument(file.name, file.type)) {
+      suggestions.push({ fileName: file.name, amount: null, label: null, confidence: "sin detectar" as const });
+      continue;
+    }
+    let suggestion = await readAmount(ai, file.name, file);
+    if (suggestion.amount === null) {
+      const visualEntries = [];
+      for (const page of pagesBySource.get(file.name) ?? []) {
+        visualEntries.push({ ...(await readAmount(ai, page.name, page)), fileName: file.name });
+      }
+      if (visualEntries.length) suggestion = bestSuggestion(file.name, visualEntries);
+    }
+    suggestions.push(suggestion);
+  }
+
+  return suggestionResponse(suggestions).total;
 }
 
 function catalogStatement(kind: string, name: string, projectType: string | null) {

@@ -167,6 +167,40 @@ function canvasBlob(canvas: HTMLCanvasElement) {
   });
 }
 
+async function appendUploadOcrPages(form: FormData, files: File[]) {
+  const pdfFiles = files.filter((file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name));
+  if (!pdfFiles.length) return;
+  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
+  GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+  let preparedPages = 0;
+
+  for (const file of pdfFiles) {
+    if (preparedPages >= 12) break;
+    try {
+      const pdf = await getDocument({ data: await file.arrayBuffer() }).promise;
+      const pageCount = Math.min(pdf.numPages, 3, 12 - preparedPages);
+      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+        const page = await pdf.getPage(pageNumber);
+        const originalViewport = page.getViewport({ scale: 1 });
+        const scale = Math.min(2, 1600 / originalViewport.width);
+        const viewport = page.getViewport({ scale });
+        const canvas = documentCanvas(viewport.width, viewport.height);
+        const context = canvas.getContext("2d", { alpha: false });
+        if (!context) continue;
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+        form.append("ocrPages", await canvasBlob(canvas), `pagina-${preparedPages + 1}.jpg`);
+        form.append("ocrSourceNames", file.name);
+        preparedPages += 1;
+      }
+      await pdf.destroy();
+    } catch {
+      // The server will still try the PDF's embedded text when rendering is unavailable.
+    }
+  }
+}
+
 export default function Home() {
   const [view, setView] = useState<"form" | "status" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
@@ -218,6 +252,7 @@ export default function Home() {
   const [adminSelectedPeriod, setAdminSelectedPeriod] = useState("");
   const [repositoryNotice, setRepositoryNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStage, setSubmitStage] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [sentId, setSentId] = useState("");
   const [sentWaiting, setSentWaiting] = useState(false);
@@ -496,8 +531,21 @@ export default function Home() {
       if (!response.ok) throw new Error(result.error ?? "No fue posible actualizar el estado.");
     }
     setPayments((current) => current.map((payment) => payment.id === id
-      ? { ...payment, status, paidAmount: status === "Pagada" ? amount ?? payment.paidAmount : payment.paidAmount }
+      ? { ...payment, status, paidAmount: amount ?? payment.paidAmount }
       : payment));
+  }
+
+  async function updateAmount(id: string, amount: number) {
+    if (dataMode === "live") {
+      const response = await fetch(`/api/submissions/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible guardar el monto.");
+    }
+    setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, paidAmount: amount } : payment));
   }
 
   async function openPaidEditor(payment: Payment) {
@@ -580,8 +628,11 @@ export default function Home() {
 
   async function selectStatus(payment: Payment, status: Status) {
     if (status === "Pagada") {
-      await openPaidEditor(payment);
-      return;
+      if (!Number(payment.paidAmount)) {
+        await openPaidEditor(payment);
+        setPaidError("Revisa y guarda el monto antes de marcar esta factura como pagada.");
+        return;
+      }
     }
     try {
       await updateStatus(payment.id, status);
@@ -590,7 +641,7 @@ export default function Home() {
     }
   }
 
-  async function savePaidStatus() {
+  async function savePaidAmount() {
     if (!paidPayment) return;
     const amount = Number(paidAmountDraft.replace(/[^0-9]/g, ""));
     if (!Number.isSafeInteger(amount) || amount <= 0) {
@@ -600,10 +651,10 @@ export default function Home() {
     setSavingPaid(true);
     setPaidError("");
     try {
-      await updateStatus(paidPayment.id, "Pagada", amount);
+      await updateAmount(paidPayment.id, amount);
       setPaidPayment(null);
     } catch (error) {
-      setPaidError(error instanceof Error ? error.message : "No fue posible guardar el pago.");
+      setPaidError(error instanceof Error ? error.message : "No fue posible guardar el monto.");
     } finally {
       setSavingPaid(false);
     }
@@ -753,9 +804,12 @@ export default function Home() {
       formData.set("motive", cleanMotive);
       formData.set("comment", comment);
       files.forEach((file) => formData.append("files", file));
+      setSubmitStage("Leyendo montos...");
+      await appendUploadOcrPages(formData, files);
+      setSubmitStage("Guardando facturas...");
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
       const result = await response.json() as {
-        submission?: { id: string; status: Status; waitingForPeriod: boolean; documents: Array<{ id: string; fileName: string; size: number }> };
+        submission?: { id: string; status: Status; paidAmount: number | null; waitingForPeriod: boolean; documents: Array<{ id: string; fileName: string; size: number }> };
         error?: string;
       };
       if (!response.ok || !result.submission) throw new Error(result.error ?? "No fue posible guardar la solicitud.");
@@ -770,6 +824,7 @@ export default function Home() {
         comment: comment.trim(),
         files: files.length,
         status: result.submission.status,
+        paidAmount: result.submission.paidAmount,
         date: "Ahora",
         periodDeadline: result.submission.waitingForPeriod ? "" : processInfo.deadline,
         waitingForPeriod: result.submission.waitingForPeriod,
@@ -787,6 +842,7 @@ export default function Home() {
       setSubmitError(error instanceof Error ? error.message : "No fue posible guardar la solicitud.");
     } finally {
       setSubmitting(false);
+      setSubmitStage("");
     }
   }
 
@@ -927,7 +983,7 @@ export default function Home() {
             </div>}
 
             {submitError && <div className="form-error"><span>!</span>{submitError}</div>}
-            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><div className="form-action-buttons"><button type="button" className="secondary clear-form" onClick={resetForm} disabled={submitting}>Limpiar formulario</button><button type="submit" className="primary" disabled={submitting}>{submitting ? "Guardando..." : acceptingProcess ? "Enviar facturas" : "Guardar en espera"} <span>→</span></button></div></div>
+            <div className="form-actions"><p><b>*</b> Campos obligatorios</p><div className="form-action-buttons"><button type="button" className="secondary clear-form" onClick={resetForm} disabled={submitting}>Limpiar formulario</button><button type="submit" className="primary" disabled={submitting}>{submitting ? submitStage || "Preparando..." : acceptingProcess ? "Enviar facturas" : "Guardar en espera"} <span>→</span></button></div></div>
           </form>
 
           {sent && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="success-title"><div className="success-modal"><span className="success-check">✓</span><h2 id="success-title">{sentWaiting ? "¡Facturas guardadas en espera!" : "¡Facturas recibidas!"}</h2><p>{sentWaiting ? <>Tu solicitud <strong>{sentId}</strong> quedó protegida y será asignada automáticamente al próximo período de pago.</> : <>Tu solicitud quedó registrada con el número <strong>{sentId}</strong> y estado <span className="badge received">Recibida</span>.</>}</p><div className="modal-actions"><button className="secondary" onClick={() => { setSent(false); setView("status"); }}>Consultar estado</button><button className="primary" onClick={resetForm}>Ingresar otra</button></div></div></div>}
@@ -1044,9 +1100,7 @@ export default function Home() {
                 <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
                 <td>{payment.department}</td>
                 <td><button className="files-button" onClick={() => setDocumentPayment(payment)}>▤ {payment.files} archivo{payment.files > 1 ? "s" : ""}<small>Ver documentos</small></button></td>
-                <td>{payment.status === "Pagada"
-                  ? <button className={`amount-button ${payment.paidAmount ? "confirmed" : "missing"}`} onClick={() => void openPaidEditor(payment)}>{payment.paidAmount ? formatCurrency(Number(payment.paidAmount)) : "Ingresar monto"}<small>{payment.notifiedAt ? `Comunicado ${payment.paymentDate ? formatStoredDate(payment.paymentDate) : ""}` : "Pendiente de correo"}</small></button>
-                  : <span className="no-amount">—</span>}</td>
+                <td><button className={`amount-button ${payment.paidAmount ? "confirmed" : "missing"}`} onClick={() => void openPaidEditor(payment)}>{payment.paidAmount ? formatCurrency(Number(payment.paidAmount)) : "Revisar monto"}<small>{payment.status === "Pagada" ? payment.notifiedAt ? `Comunicado ${payment.paymentDate ? formatStoredDate(payment.paymentDate) : ""}` : "Pendiente de correo" : payment.paidAmount ? "Detectado automáticamente · Editar" : "No detectado · Ingresar"}</small></button></td>
                 <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => void selectStatus(payment, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>}</td>
                 <td><div className="row-actions">
                   <button className="more" aria-label={`Más opciones para ${payment.id}`} aria-expanded={openMenuId === payment.id} onClick={() => setOpenMenuId((current) => current === payment.id ? null : payment.id)}>•••</button>
@@ -1168,7 +1222,7 @@ export default function Home() {
       {paidPayment && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="paid-title">
         <div className="success-modal paid-modal">
           <span className="paid-modal-icon">$</span>
-          <h2 id="paid-title">Confirmar pago de {paidPayment.id}</h2>
+          <h2 id="paid-title">Revisar monto de {paidPayment.id}</h2>
           <p><strong>{paidPayment.provider}</strong> · {paidPayment.project}</p>
           {readingAmount && <div className="amount-reading"><span className="spinner" /> Leyendo el total a pagar de {paidPayment.files} documento{paidPayment.files === 1 ? "" : "s"}...</div>}
           {amountSuggestion && <div className="amount-suggestions">
@@ -1178,10 +1232,10 @@ export default function Home() {
             </div>)}
             {amountSuggestion.detectedCount < amountSuggestion.documentCount && <small>Revisa el total: no fue posible leer todos los documentos.</small>}
           </div>}
-          <label className="paid-amount-label">Monto total pagado <input autoFocus={!readingAmount} inputMode="numeric" value={paidAmountDraft} onChange={(event) => setPaidAmountDraft(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Ejemplo: 1250000" /><small>{paidAmountDraft ? formatCurrency(Number(paidAmountDraft)) : "Confirma el total con IVA, total exento o líquido de honorarios."}</small></label>
+          <label className="paid-amount-label">Monto total del documento <input autoFocus={!readingAmount} inputMode="numeric" value={paidAmountDraft} onChange={(event) => setPaidAmountDraft(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Ejemplo: 1250000" /><small>{paidAmountDraft ? formatCurrency(Number(paidAmountDraft)) : "Ingresa el total con IVA, total exento o líquido de honorarios."}</small></label>
           {paidError && <div className="form-error"><span>!</span>{paidError}</div>}
-          <div className="amount-confirmation-note"><span>i</span> La lectura es una sugerencia. Confirma el monto antes de guardar.</div>
-          <div className="modal-actions"><button type="button" className="secondary" disabled={savingPaid} onClick={() => setPaidPayment(null)}>Cancelar</button><button type="button" className="primary" disabled={savingPaid || readingAmount || !paidAmountDraft} onClick={() => void savePaidStatus()}>{savingPaid ? "Guardando..." : "Confirmar como Pagada"}</button></div>
+          <div className="amount-confirmation-note"><span>i</span> El monto fue leído automáticamente. Puedes corregirlo aquí si encuentras alguna diferencia.</div>
+          <div className="modal-actions"><button type="button" className="secondary" disabled={savingPaid} onClick={() => setPaidPayment(null)}>Cancelar</button><button type="button" className="primary" disabled={savingPaid || readingAmount || !paidAmountDraft} onClick={() => void savePaidAmount()}>{savingPaid ? "Guardando..." : "Guardar monto"}</button></div>
         </div>
       </div>}
 

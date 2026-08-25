@@ -8,26 +8,39 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (unauthorized) return unauthorized;
   const { id } = await context.params;
   const payload = await request.json() as { status?: string; amount?: number };
-  if (!payload.status || !VALID_STATUSES.has(payload.status)) {
+  if (payload.status !== undefined && !VALID_STATUSES.has(payload.status)) {
     return Response.json({ error: "Estado inválido." }, { status: 400 });
   }
-  const paidAmount = Number(payload.amount);
-  if (payload.status === "Pagada" && (!Number.isSafeInteger(paidAmount) || paidAmount <= 0)) {
-    return Response.json({ error: "Confirma un monto pagado válido." }, { status: 400 });
+  if (payload.status === undefined && payload.amount === undefined) {
+    return Response.json({ error: "No hay cambios para guardar." }, { status: 400 });
+  }
+  const current = await env.DB.prepare(`
+    SELECT status, paid_amount AS paidAmount FROM submissions WHERE id = ?
+  `).bind(id).first<{ status: string; paidAmount: number | null }>();
+  if (!current) {
+    return Response.json({ error: "Solicitud no encontrada." }, { status: 404 });
+  }
+
+  const status = payload.status ?? current.status;
+  const paidAmount = payload.amount === undefined ? current.paidAmount : Number(payload.amount);
+  if (payload.amount !== undefined && (!Number.isSafeInteger(paidAmount) || Number(paidAmount) <= 0)) {
+    return Response.json({ error: "Ingresa un monto válido." }, { status: 400 });
+  }
+  if (status === "Pagada" && (!Number.isSafeInteger(paidAmount) || Number(paidAmount) <= 0)) {
+    return Response.json({ error: "La factura no tiene un monto válido. Revísalo antes de marcarla como pagada." }, { status: 400 });
   }
 
   const result = await env.DB.prepare(`
     UPDATE submissions
-    SET status = ?,
-        paid_amount = CASE WHEN ? = 'Pagada' THEN ? ELSE paid_amount END,
+    SET status = ?, paid_amount = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(payload.status, payload.status, payload.status === "Pagada" ? paidAmount : null, id).run();
+  `).bind(status, paidAmount, id).run();
 
   if (!result.meta.changes) {
     return Response.json({ error: "Solicitud no encontrada." }, { status: 404 });
   }
-  return Response.json({ id, status: payload.status, paidAmount: payload.status === "Pagada" ? paidAmount : undefined });
+  return Response.json({ id, status, paidAmount });
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
