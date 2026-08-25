@@ -65,7 +65,7 @@ function confidenceScore(confidence: AmountSuggestion["confidence"]) {
   return confidence === "alta" ? 2 : confidence === "media" ? 1 : 0;
 }
 
-function detectPayableAmount(text: string) {
+export function detectPayableAmount(text: string) {
   const lines = text
     .split(/\r?\n/)
     .map((line) => line.replace(/\s+/g, " ").trim())
@@ -74,17 +74,18 @@ function detectPayableAmount(text: string) {
     { pattern: /l[ií]quido\s+(?:total\s+)?a\s+pagar/i, score: 120 },
     { pattern: /total\s+a\s+pagar/i, score: 115 },
     { pattern: /monto\s+total/i, score: 110 },
-    { pattern: /valor\s+total/i, score: 105 },
+    { pattern: /valor\s+total/i, score: 65 },
     { pattern: /total\s+(?:factura|boleta|documento|honorarios)/i, score: 100 },
     { pattern: /\btotal\b/i, score: 70 },
   ];
   const candidates: Array<{ amount: number; label: string; score: number }> = [];
 
   lines.forEach((line, index) => {
+    if (/p\.?\s*unit|precio\s+unitario|descripci[oó]n/i.test(line) && /valor\s+total/i.test(line)) return;
     if (/subtotal|neto|iva|retenci[oó]n/i.test(line) && !/l[ií]quido|total\s+a\s+pagar/i.test(line)) return;
     for (const rule of rules) {
       if (!rule.pattern.test(line)) continue;
-      const nearby = [line, lines[index + 1] ?? ""].join(" ");
+      const nearby = lines.slice(index, index + 5).join(" ");
       for (const candidate of amountsFrom(nearby)) {
         if (candidate.amount > 0 && candidate.amount < 10_000_000_000) {
           candidates.push({
@@ -100,16 +101,51 @@ function detectPayableAmount(text: string) {
 
   candidates.sort((a, b) => b.score - a.score || b.amount - a.amount);
   const best = candidates[0];
-  if (!best) return null;
-  return { amount: best.amount, label: best.label, confidence: best.score >= 105 ? "alta" as const : "media" as const };
+  if (best && best.score >= 70) {
+    return { amount: best.amount, label: best.label, confidence: best.score >= 105 ? "alta" as const : "media" as const };
+  }
+
+  const netAmount = labeledAmount(lines, /\bneto\b/i);
+  const vatAmount = labeledAmount(lines, /\biva\b/i);
+  const exemptAmount = labeledAmount(lines, /\bexento\b/i);
+  if (netAmount !== null && vatAmount !== null) {
+    return {
+      amount: netAmount + vatAmount + (exemptAmount ?? 0),
+      label: "NETO + IVA",
+      confidence: "media" as const,
+    };
+  }
+  if (exemptAmount !== null && netAmount === null) {
+    return { amount: exemptAmount, label: "TOTAL EXENTO", confidence: "media" as const };
+  }
+  return best
+    ? { amount: best.amount, label: best.label, confidence: "media" as const }
+    : null;
 }
 
 function amountsFrom(value: string) {
-  const matches = value.match(/(?:CLP|\$)?\s*(?:\d{1,3}(?:[.\s]\d{3})+|\d{4,})(?:,\d{1,2})?/gi) ?? [];
+  const matches = value.match(/(?:CLP|\$)?\s*(?:\d{1,3}(?:[.,\s]\d{3})+|\d{4,})(?:[.,]\d{1,2})?/gi) ?? [];
   return matches.map((match) => {
     const hasCurrency = /CLP|\$/i.test(match);
     const normalized = match.replace(/CLP|\$|\s/gi, "");
-    const integerPart = normalized.split(",")[0].replace(/\./g, "");
+    const groupedThousands = /^\d{1,3}(?:[.,]\d{3})+$/.test(normalized);
+    const decimalMatch = normalized.match(/[.,](\d{1,2})$/);
+    const integerPart = groupedThousands
+      ? normalized.replace(/[.,]/g, "")
+      : decimalMatch
+        ? normalized.slice(0, -decimalMatch[0].length).replace(/[.,]/g, "")
+        : normalized.replace(/[.,]/g, "");
     return { amount: Number(integerPart), hasCurrency };
   }).filter((item) => Number.isSafeInteger(item.amount));
+}
+
+function labeledAmount(lines: string[], label: RegExp) {
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!label.test(lines[index])) continue;
+    const candidates = amountsFrom(lines.slice(index, index + 3).join(" "))
+      .map((candidate) => candidate.amount)
+      .filter((amount) => amount > 0 && amount < 10_000_000_000);
+    if (candidates.length) return Math.max(...candidates);
+  }
+  return null;
 }
