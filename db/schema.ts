@@ -33,6 +33,9 @@ export const submissions = sqliteTable("submissions", {
   motive: text("motive").notNull(),
   comment: text("comment").notNull().default(""),
   status: text("status", { enum: ["Recibida", "En proceso", "Pendiente", "Pagada"] }).notNull().default("Recibida"),
+  paidAmount: integer("paid_amount"),
+  paymentDate: text("payment_date"),
+  notifiedAt: text("notified_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -41,6 +44,7 @@ export const submissions = sqliteTable("submissions", {
   index("submissions_process_idx").on(table.processId),
   index("submissions_department_period_idx").on(table.department, table.paymentPeriod),
   index("submissions_waiting_idx").on(table.waitingForPeriod),
+  index("submissions_notification_idx").on(table.paymentPeriod, table.status, table.notifiedAt),
 ]);
 
 export const documents = sqliteTable("documents", {

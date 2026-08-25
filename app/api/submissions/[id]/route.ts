@@ -7,19 +7,27 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
   const { id } = await context.params;
-  const payload = await request.json() as { status?: string };
+  const payload = await request.json() as { status?: string; amount?: number };
   if (!payload.status || !VALID_STATUSES.has(payload.status)) {
     return Response.json({ error: "Estado inválido." }, { status: 400 });
   }
+  const paidAmount = Number(payload.amount);
+  if (payload.status === "Pagada" && (!Number.isSafeInteger(paidAmount) || paidAmount <= 0)) {
+    return Response.json({ error: "Confirma un monto pagado válido." }, { status: 400 });
+  }
 
   const result = await env.DB.prepare(`
-    UPDATE submissions SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-  `).bind(payload.status, id).run();
+    UPDATE submissions
+    SET status = ?,
+        paid_amount = CASE WHEN ? = 'Pagada' THEN ? ELSE paid_amount END,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(payload.status, payload.status, payload.status === "Pagada" ? paidAmount : null, id).run();
 
   if (!result.meta.changes) {
     return Response.json({ error: "Solicitud no encontrada." }, { status: 404 });
   }
-  return Response.json({ id, status: payload.status });
+  return Response.json({ id, status: payload.status, paidAmount: payload.status === "Pagada" ? paidAmount : undefined });
 }
 
 export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {

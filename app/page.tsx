@@ -85,7 +85,21 @@ type Payment = {
   date: string;
   periodDeadline: string;
   waitingForPeriod: boolean;
+  paidAmount?: number | null;
+  paymentDate?: string | null;
+  notifiedAt?: string | null;
   documents?: Array<{ id: string; fileName: string; size: number }>;
+};
+type AmountSuggestion = {
+  suggestions: Array<{ fileName: string; amount: number | null; label: string | null; confidence: string }>;
+  total: number | null;
+  detectedCount: number;
+  documentCount: number;
+};
+type NotificationPreview = {
+  rows: Array<{ id: string; department: string; provider: string; project: string; paidAmount: number }>;
+  recipients: string[];
+  paymentDate: string;
 };
 type CatalogEntry = {
   id: number;
@@ -124,6 +138,21 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(value);
+}
+
+function formatStoredDate(value: string) {
+  const [year, month, day] = value.split("-");
+  return `${day}-${month}-${year}`;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
+  })[character] ?? character);
+}
+
 export default function Home() {
   const [view, setView] = useState<"form" | "status" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
@@ -151,6 +180,16 @@ export default function Home() {
   const [publicSelectedPeriod, setPublicSelectedPeriod] = useState("");
   const [documentPayment, setDocumentPayment] = useState<Payment | null>(null);
   const [commentPayment, setCommentPayment] = useState<Payment | null>(null);
+  const [paidPayment, setPaidPayment] = useState<Payment | null>(null);
+  const [paidAmountDraft, setPaidAmountDraft] = useState("");
+  const [amountSuggestion, setAmountSuggestion] = useState<AmountSuggestion | null>(null);
+  const [readingAmount, setReadingAmount] = useState(false);
+  const [savingPaid, setSavingPaid] = useState(false);
+  const [paidError, setPaidError] = useState("");
+  const [notificationPreview, setNotificationPreview] = useState<NotificationPreview | null>(null);
+  const [notificationBusy, setNotificationBusy] = useState(false);
+  const [notificationError, setNotificationError] = useState("");
+  const [emailCopied, setEmailCopied] = useState(false);
   const [processInfo, setProcessInfo] = useState<ProcessInfo>({
     id: "2026-07-2",
     name: "Proceso 2 · Julio 2026",
@@ -407,6 +446,12 @@ export default function Home() {
   const publicProviders = useMemo(() => Array.from(new Set(payments.map((payment) => payment.provider))).sort((a, b) => a.localeCompare(b, "es")), [payments]);
 
   const counts = (status: Status) => adminPeriodPayments.filter((payment) => payment.status === status).length;
+  const pendingNotificationCount = adminPeriodPayments.filter((payment) =>
+    payment.status === "Pagada" && Number(payment.paidAmount) > 0 && !payment.notifiedAt
+  ).length;
+  const paidWithoutAmountCount = adminPeriodPayments.filter((payment) =>
+    payment.status === "Pagada" && !Number(payment.paidAmount)
+  ).length;
   const waitingCount = payments.filter((payment) => payment.waitingForPeriod).length;
   const deadlineExpired = Date.now() >= Date.parse(processInfo.deadline);
   const acceptingProcess = processInfo.isOpen && !deadlineExpired;
@@ -426,16 +471,150 @@ export default function Home() {
     entry.kind === catalogKind && (!catalogSearch || entry.name.toLowerCase().includes(catalogSearch.toLowerCase()))
   );
 
-  async function updateStatus(id: string, status: Status) {
+  async function updateStatus(id: string, status: Status, amount?: number) {
     if (dataMode === "live") {
       const response = await fetch(`/api/submissions/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, amount }),
       });
-      if (!response.ok) return;
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible actualizar el estado.");
     }
-    setPayments((current) => current.map((payment) => payment.id === id ? { ...payment, status } : payment));
+    setPayments((current) => current.map((payment) => payment.id === id
+      ? { ...payment, status, paidAmount: status === "Pagada" ? amount ?? payment.paidAmount : payment.paidAmount }
+      : payment));
+  }
+
+  async function openPaidEditor(payment: Payment) {
+    setPaidPayment(payment);
+    setPaidAmountDraft(payment.paidAmount ? String(payment.paidAmount) : "");
+    setAmountSuggestion(null);
+    setPaidError("");
+    if (payment.paidAmount || dataMode !== "live") return;
+    setReadingAmount(true);
+    try {
+      const response = await fetch(`/api/submissions/${encodeURIComponent(payment.id)}/amount-suggestion`, { method: "POST" });
+      const result = await response.json() as AmountSuggestion & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible leer los documentos.");
+      setAmountSuggestion(result);
+      if (result.total) setPaidAmountDraft(String(result.total));
+    } catch (error) {
+      setPaidError(error instanceof Error ? error.message : "No fue posible leer el monto. Puedes ingresarlo manualmente.");
+    } finally {
+      setReadingAmount(false);
+    }
+  }
+
+  async function selectStatus(payment: Payment, status: Status) {
+    if (status === "Pagada") {
+      await openPaidEditor(payment);
+      return;
+    }
+    try {
+      await updateStatus(payment.id, status);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "No fue posible actualizar el estado.");
+    }
+  }
+
+  async function savePaidStatus() {
+    if (!paidPayment) return;
+    const amount = Number(paidAmountDraft.replace(/[^0-9]/g, ""));
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
+      setPaidError("Ingresa o confirma un monto válido.");
+      return;
+    }
+    setSavingPaid(true);
+    setPaidError("");
+    try {
+      await updateStatus(paidPayment.id, "Pagada", amount);
+      setPaidPayment(null);
+    } catch (error) {
+      setPaidError(error instanceof Error ? error.message : "No fue posible guardar el pago.");
+    } finally {
+      setSavingPaid(false);
+    }
+  }
+
+  async function openNotificationPreview() {
+    if (!effectiveAdminPeriod) return;
+    setNotificationBusy(true);
+    setNotificationError("");
+    setEmailCopied(false);
+    try {
+      const response = await fetch(`/api/payment-notifications?period=${encodeURIComponent(effectiveAdminPeriod)}`, { cache: "no-store" });
+      const result = await response.json() as NotificationPreview & { error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible preparar el correo.");
+      setNotificationPreview(result);
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "No fue posible preparar el correo.");
+    } finally {
+      setNotificationBusy(false);
+    }
+  }
+
+  function emailContent(preview: NotificationPreview) {
+    const periodName = `Período de pago ${formatPeriodDate(effectiveAdminPeriod)}`;
+    const date = formatStoredDate(preview.paymentDate);
+    const total = preview.rows.reduce((sum, row) => sum + row.paidAmount, 0);
+    const rowsHtml = preview.rows.map((row) => `<tr><td>${escapeHtml(row.department)}</td><td>${escapeHtml(row.provider)}</td><td>${escapeHtml(row.project)}</td><td style="text-align:right">${escapeHtml(formatCurrency(row.paidAmount))}</td><td>${date}</td></tr>`).join("");
+    const html = `<p>Estimados:</p><p>Informamos que los siguientes documentos correspondientes al <strong>${escapeHtml(periodName)}</strong> fueron pagados con fecha <strong>${date}</strong>:</p><table style="border-collapse:collapse;width:100%"><thead><tr><th style="border:1px solid #ccd8d8;padding:8px;text-align:left">Departamento</th><th style="border:1px solid #ccd8d8;padding:8px;text-align:left">Proveedor</th><th style="border:1px solid #ccd8d8;padding:8px;text-align:left">Proyecto</th><th style="border:1px solid #ccd8d8;padding:8px;text-align:right">Monto pagado</th><th style="border:1px solid #ccd8d8;padding:8px;text-align:left">Fecha de pago</th></tr></thead><tbody>${rowsHtml.replaceAll("<td>", '<td style="border:1px solid #ccd8d8;padding:8px">').replaceAll('<td style="text-align:right">', '<td style="border:1px solid #ccd8d8;padding:8px;text-align:right">')}</tbody></table><p><strong>Total pagado: ${escapeHtml(formatCurrency(total))}</strong></p><p>Los montos corresponden al total a pagar de facturas afectas o exentas y al líquido a pagar de boletas de honorarios.</p><p>Saludos cordiales,<br>Control de Pagos – Gerencia de Proyectos</p>`;
+    const text = [
+      "Estimados:", "", `Pagos realizados del ${periodName} con fecha ${date}:`, "",
+      "Departamento | Proveedor | Proyecto | Monto pagado | Fecha de pago",
+      ...preview.rows.map((row) => `${row.department} | ${row.provider} | ${row.project} | ${formatCurrency(row.paidAmount)} | ${date}`),
+      "", `Total pagado: ${formatCurrency(total)}`, "", "Saludos cordiales,", "Control de Pagos – Gerencia de Proyectos",
+    ].join("\n");
+    return { html, text, subject: `Pagos realizados – ${periodName}` };
+  }
+
+  async function copyEmailAndOpenOutlook() {
+    if (!notificationPreview?.rows.length) return;
+    const content = emailContent(notificationPreview);
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob([content.html], { type: "text/html" }),
+          "text/plain": new Blob([content.text], { type: "text/plain" }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(content.text);
+      }
+      setEmailCopied(true);
+      window.location.href = `mailto:${notificationPreview.recipients.join(",")}?subject=${encodeURIComponent(content.subject)}`;
+    } catch {
+      setNotificationError("No fue posible copiar el correo. Revisa los permisos del portapapeles del navegador.");
+    }
+  }
+
+  async function confirmNotificationSent() {
+    if (!notificationPreview?.rows.length || !effectiveAdminPeriod) return;
+    setNotificationBusy(true);
+    setNotificationError("");
+    try {
+      const response = await fetch("/api/payment-notifications", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          period: effectiveAdminPeriod,
+          ids: notificationPreview.rows.map((row) => row.id),
+          paymentDate: notificationPreview.paymentDate,
+        }),
+      });
+      const result = await response.json() as { updated?: number; paymentDate?: string; error?: string };
+      if (!response.ok) throw new Error(result.error ?? "No fue posible registrar el envío.");
+      const ids = new Set(notificationPreview.rows.map((row) => row.id));
+      setPayments((current) => current.map((payment) => ids.has(payment.id)
+        ? { ...payment, paymentDate: result.paymentDate, notifiedAt: new Date().toISOString() }
+        : payment));
+      setNotificationPreview(null);
+      setEmailCopied(false);
+    } catch (error) {
+      setNotificationError(error instanceof Error ? error.message : "No fue posible registrar el envío.");
+    } finally {
+      setNotificationBusy(false);
+    }
   }
 
   async function updateProcess(changes: { isOpen?: boolean; deadline?: string }) {
@@ -760,6 +939,17 @@ export default function Home() {
             {statusFilter === "En espera" && <div className="admin-period-waiting"><span>⌛</span><div><strong>Bandeja en espera</strong><small>No pertenece a ningún período hasta abrir una nueva fecha.</small></div></div>}
           </div>
 
+          <div className="payment-notification-card">
+            <div className="payment-notification-icon">✉</div>
+            <div className="payment-notification-copy">
+              <small>Comunicación interna</small>
+              <strong>Correo consolidado de pagos</strong>
+              <p>{pendingNotificationCount} pago{pendingNotificationCount === 1 ? "" : "s"} listo{pendingNotificationCount === 1 ? "" : "s"} para comunicar{paidWithoutAmountCount ? ` · ${paidWithoutAmountCount} sin monto confirmado` : ""}.</p>
+            </div>
+            <button className="primary" disabled={notificationBusy || !pendingNotificationCount} onClick={() => void openNotificationPreview()}>{notificationBusy ? "Preparando..." : "Preparar correo en Outlook"}</button>
+          </div>
+          {notificationError && !notificationPreview && <div className="form-error"><span>!</span>{notificationError}</div>}
+
           <div className="stats-grid">
             <button onClick={() => setStatusFilter("Todos")} className={statusFilter === "Todos" ? "selected" : ""}><span className="stat-icon all">▦</span><div><strong>{adminPeriodPayments.length}</strong><small>Total del período</small></div></button>
             <button onClick={() => setStatusFilter("En espera")} className={statusFilter === "En espera" ? "selected" : ""}><span className="stat-icon waiting">⌛</span><div><strong>{waitingCount}</strong><small>En espera</small></div></button>
@@ -775,20 +965,23 @@ export default function Home() {
               <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todos</option><option>En espera</option><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>
               <button className="export-button">⇩ Exportar Excel</button>
             </div>
-            <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Estado</th><th /></tr></thead><tbody>
+            <div className="table-wrap"><table><thead><tr><th>Solicitud</th><th>Proveedor</th><th>Proyecto</th><th>Departamento</th><th>Documentos</th><th>Monto</th><th>Estado</th><th /></tr></thead><tbody>
               {filteredPayments.map((payment) => <tr key={payment.id}>
                 <td><strong>{payment.id}</strong><small>{payment.requester} · {payment.date}</small></td>
                 <td><strong>{payment.provider}</strong><small>{payment.motive}</small></td>
                 <td><strong>{payment.project}</strong><small>{payment.type}</small></td>
                 <td>{payment.department}</td>
                 <td><button className="files-button" onClick={() => setDocumentPayment(payment)}>▤ {payment.files} archivo{payment.files > 1 ? "s" : ""}<small>Ver documentos</small></button></td>
-                <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => updateStatus(payment.id, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>}</td>
+                <td>{payment.status === "Pagada"
+                  ? <button className={`amount-button ${payment.paidAmount ? "confirmed" : "missing"}`} onClick={() => void openPaidEditor(payment)}>{payment.paidAmount ? formatCurrency(Number(payment.paidAmount)) : "Ingresar monto"}<small>{payment.notifiedAt ? `Comunicado ${payment.paymentDate ? formatStoredDate(payment.paymentDate) : ""}` : "Pendiente de correo"}</small></button>
+                  : <span className="no-amount">—</span>}</td>
+                <td>{payment.waitingForPeriod ? <span className="badge waiting">En espera de período</span> : <select className={`status-select ${payment.status.toLowerCase().replace(" ", "-")}`} value={payment.status} onChange={(event) => void selectStatus(payment, event.target.value as Status)}><option>Recibida</option><option>En proceso</option><option>Pendiente</option><option>Pagada</option></select>}</td>
                 <td><div className="row-actions">
                   <button className="more" aria-label={`Más opciones para ${payment.id}`} aria-expanded={openMenuId === payment.id} onClick={() => setOpenMenuId((current) => current === payment.id ? null : payment.id)}>•••</button>
                   {openMenuId === payment.id && <div className="action-menu"><button onClick={() => { setPendingDelete(payment); setOpenMenuId(null); setDeleteError(""); }}><span>×</span> Eliminar registro</button></div>}
                 </div></td>
               </tr>)}
-              {!filteredPayments.length && <tr><td colSpan={7} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
+              {!filteredPayments.length && <tr><td colSpan={8} className="empty-state">No encontramos solicitudes con esos filtros.</td></tr>}
             </tbody></table></div>
             <div className="table-footer"><span>{statusFilter === "En espera" ? `Mostrando ${filteredPayments.length} facturas en espera` : `Mostrando ${filteredPayments.length} de ${adminPeriodPayments.length} solicitudes del período`}</span><div><button disabled>‹</button><button className="current">1</button><button disabled>›</button></div></div>
           </div>
@@ -898,6 +1091,44 @@ export default function Home() {
             <button type="submit" className="primary" disabled={loggingIn || !password}>{loggingIn ? "Ingresando..." : "Ingresar"}</button>
           </div>
         </form>
+      </div>}
+
+      {paidPayment && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="paid-title">
+        <div className="success-modal paid-modal">
+          <span className="paid-modal-icon">$</span>
+          <h2 id="paid-title">Confirmar pago de {paidPayment.id}</h2>
+          <p><strong>{paidPayment.provider}</strong> · {paidPayment.project}</p>
+          {readingAmount && <div className="amount-reading"><span className="spinner" /> Leyendo el total a pagar de {paidPayment.files} documento{paidPayment.files === 1 ? "" : "s"}...</div>}
+          {amountSuggestion && <div className="amount-suggestions">
+            {amountSuggestion.suggestions.map((suggestion) => <div key={suggestion.fileName}>
+              <span>{suggestion.fileName}</span>
+              <strong>{suggestion.amount ? formatCurrency(suggestion.amount) : "No detectado"}</strong>
+            </div>)}
+            {amountSuggestion.detectedCount < amountSuggestion.documentCount && <small>Revisa el total: no fue posible leer todos los documentos.</small>}
+          </div>}
+          <label className="paid-amount-label">Monto total pagado <input autoFocus={!readingAmount} inputMode="numeric" value={paidAmountDraft} onChange={(event) => setPaidAmountDraft(event.target.value.replace(/[^0-9]/g, ""))} placeholder="Ejemplo: 1250000" /><small>{paidAmountDraft ? formatCurrency(Number(paidAmountDraft)) : "Confirma el total con IVA, total exento o líquido de honorarios."}</small></label>
+          {paidError && <div className="form-error"><span>!</span>{paidError}</div>}
+          <div className="amount-confirmation-note"><span>i</span> La lectura es una sugerencia. Confirma el monto antes de guardar.</div>
+          <div className="modal-actions"><button type="button" className="secondary" disabled={savingPaid} onClick={() => setPaidPayment(null)}>Cancelar</button><button type="button" className="primary" disabled={savingPaid || readingAmount || !paidAmountDraft} onClick={() => void savePaidStatus()}>{savingPaid ? "Guardando..." : "Confirmar como Pagada"}</button></div>
+        </div>
+      </div>}
+
+      {notificationPreview && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="notification-title">
+        <div className="success-modal notification-modal">
+          <span className="notification-modal-icon">✉</span>
+          <h2 id="notification-title">Vista previa del correo</h2>
+          <p>Para: <strong>{notificationPreview.recipients.join(", ")}</strong> · Fecha de pago {formatStoredDate(notificationPreview.paymentDate)}</p>
+          {notificationPreview.rows.length ? <div className="notification-table-wrap"><table><thead><tr><th>Departamento</th><th>Proveedor</th><th>Proyecto</th><th>Monto</th><th>Fecha</th></tr></thead><tbody>
+            {notificationPreview.rows.map((row) => <tr key={row.id}><td>{row.department}</td><td>{row.provider}</td><td>{row.project}</td><td><strong>{formatCurrency(row.paidAmount)}</strong></td><td>{formatStoredDate(notificationPreview.paymentDate)}</td></tr>)}
+          </tbody><tfoot><tr><td colSpan={3}><strong>Total pagado</strong></td><td colSpan={2}><strong>{formatCurrency(notificationPreview.rows.reduce((sum, row) => sum + row.paidAmount, 0))}</strong></td></tr></tfoot></table></div> : <div className="empty-catalog">No hay pagos pendientes de comunicar en este período.</div>}
+          {emailCopied && <div className="email-copy-success"><span>✓</span><div><strong>Correo copiado y Outlook abierto</strong><small>Pega el contenido con Ctrl+V, revisa y envíalo. Después vuelve aquí para confirmar.</small></div></div>}
+          {notificationError && <div className="form-error"><span>!</span>{notificationError}</div>}
+          <div className="modal-actions notification-actions">
+            <button type="button" className="secondary" disabled={notificationBusy} onClick={() => { setNotificationPreview(null); setEmailCopied(false); setNotificationError(""); }}>Cerrar</button>
+            <button type="button" className="primary" disabled={notificationBusy || !notificationPreview.rows.length} onClick={() => void copyEmailAndOpenOutlook()}>Copiar y abrir Outlook</button>
+            {emailCopied && <button type="button" className="confirm-sent-button" disabled={notificationBusy} onClick={() => void confirmNotificationSent()}>{notificationBusy ? "Registrando..." : "Confirmar correo enviado"}</button>}
+          </div>
+        </div>
       </div>}
 
       {documentPayment && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="documents-title" onMouseDown={(event) => { if (event.target === event.currentTarget) setDocumentPayment(null); }}>

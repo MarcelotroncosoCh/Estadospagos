@@ -16,6 +16,9 @@ config.r2_buckets = [{
   binding: "FILES",
   bucket_name: "estadospagos-files",
 }];
+config.ai = {
+  binding: "AI",
+};
 
 await writeFile(outputPath, `${JSON.stringify(config, null, 2)}\n`);
 console.log("Cloudflare deployment configuration prepared.");

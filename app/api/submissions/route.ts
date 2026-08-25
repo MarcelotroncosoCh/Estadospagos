@@ -21,6 +21,7 @@ export async function GET(request: Request) {
     SELECT s.id, s.requester, s.department, s.provider, s.payment_period AS periodDeadline,
            s.waiting_for_period AS waitingForPeriod,
            s.project_type AS type, s.project, s.motive, s.comment, s.status,
+           s.paid_amount AS paidAmount, s.payment_date AS paymentDate, s.notified_at AS notifiedAt,
            s.created_at AS createdAt, COUNT(d.id) AS files
     FROM submissions s
     LEFT JOIN documents d ON d.submission_id = s.id

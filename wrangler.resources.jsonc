@@ -15,5 +15,9 @@
       "binding": "FILES",
       "bucket_name": "estadospagos-files"
     }
-  ]
+  ],
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  }
 }
