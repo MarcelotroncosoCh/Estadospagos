@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 const departments = [
   "Arquitectura",
@@ -151,6 +152,19 @@ function escapeHtml(value: string) {
   return value.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
   })[character] ?? character);
+}
+
+function documentCanvas(width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(width));
+  canvas.height = Math.max(1, Math.ceil(height));
+  return canvas;
+}
+
+function canvasBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("No fue posible preparar la página.")), "image/jpeg", 0.88);
+  });
 }
 
 export default function Home() {
@@ -497,13 +511,71 @@ export default function Home() {
       const response = await fetch(`/api/submissions/${encodeURIComponent(payment.id)}/amount-suggestion`, { method: "POST" });
       const result = await response.json() as AmountSuggestion & { error?: string };
       if (!response.ok) throw new Error(result.error ?? "No fue posible leer los documentos.");
-      setAmountSuggestion(result);
-      if (result.total) setPaidAmountDraft(String(result.total));
+      let finalResult = result;
+      if (result.detectedCount < result.documentCount && payment.documents?.length) {
+        finalResult = await readDocumentsVisually(payment, result);
+      }
+      setAmountSuggestion(finalResult);
+      if (finalResult.total) setPaidAmountDraft(String(finalResult.total));
     } catch (error) {
       setPaidError(error instanceof Error ? error.message : "No fue posible leer el monto. Puedes ingresarlo manualmente.");
     } finally {
       setReadingAmount(false);
     }
+  }
+
+  async function readDocumentsVisually(payment: Payment, initial: AmountSuggestion) {
+    const missingNames = new Set(initial.suggestions.filter((item) => item.amount === null).map((item) => item.fileName));
+    const documents = (payment.documents ?? []).filter((document) => missingNames.has(document.fileName));
+    const form = new FormData();
+
+    for (const document of documents) {
+      const response = await fetch(`/api/files/${encodeURIComponent(document.id)}?view=1`);
+      if (!response.ok) continue;
+      const blob = await response.blob();
+      if (/\.pdf$/i.test(document.fileName) || blob.type === "application/pdf") {
+        const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
+        GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        const pdf = await getDocument({ data: await blob.arrayBuffer() }).promise;
+        const pageCount = Math.min(pdf.numPages, 3);
+        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+          const page = await pdf.getPage(pageNumber);
+          const originalViewport = page.getViewport({ scale: 1 });
+          const scale = Math.min(2, 1600 / originalViewport.width);
+          const viewport = page.getViewport({ scale });
+          const canvas = documentCanvas(viewport.width, viewport.height);
+          const context = canvas.getContext("2d", { alpha: false });
+          if (!context) continue;
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          await page.render({ canvas, canvasContext: context, viewport }).promise;
+          const rendered = await canvasBlob(canvas);
+          form.append("pages", rendered, `${document.id}-pagina-${pageNumber}.jpg`);
+          form.append("sourceNames", document.fileName);
+        }
+        await pdf.destroy();
+      } else if (blob.type.startsWith("image/") || /\.(jpe?g|png|webp|gif|bmp)$/i.test(document.fileName)) {
+        form.append("pages", blob, document.fileName);
+        form.append("sourceNames", document.fileName);
+      }
+    }
+
+    if (!form.has("pages")) return initial;
+    const response = await fetch(`/api/submissions/${encodeURIComponent(payment.id)}/amount-suggestion`, {
+      method: "PUT",
+      body: form,
+    });
+    const visual = await response.json() as AmountSuggestion & { error?: string };
+    if (!response.ok) throw new Error(visual.error ?? "No fue posible realizar la lectura visual.");
+    const visualByName = new Map(visual.suggestions.map((item) => [item.fileName, item]));
+    const suggestions = initial.suggestions.map((item) => item.amount === null ? visualByName.get(item.fileName) ?? item : item);
+    const detected = suggestions.filter((item): item is typeof item & { amount: number } => item.amount !== null);
+    return {
+      suggestions,
+      total: detected.length === suggestions.length ? detected.reduce((sum, item) => sum + item.amount, 0) : null,
+      detectedCount: detected.length,
+      documentCount: suggestions.length,
+    };
   }
 
   async function selectStatus(payment: Payment, status: Status) {

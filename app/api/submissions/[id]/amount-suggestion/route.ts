@@ -20,6 +20,13 @@ type AiBinding = {
   ): Promise<ConversionResult | ConversionResult[]>;
 };
 
+type Suggestion = {
+  fileName: string;
+  amount: number | null;
+  label: string | null;
+  confidence: "alta" | "media" | "sin detectar";
+};
+
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const unauthorized = await requireAdmin(request);
   if (unauthorized) return unauthorized;
@@ -40,12 +47,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return Response.json({ error: "La lectura automática no está disponible. Ingresa el monto manualmente." }, { status: 503 });
   }
 
-  const suggestions: Array<{
-    fileName: string;
-    amount: number | null;
-    label: string | null;
-    confidence: "alta" | "media" | "sin detectar";
-  }> = [];
+  const suggestions: Suggestion[] = [];
 
   for (const document of documents.results) {
     if (!isSupported(document)) {
@@ -73,15 +75,73 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
   }
 
-  const detected = suggestions.filter((item): item is typeof item & { amount: number } => item.amount !== null);
-  return Response.json({
+  return Response.json(suggestionResponse(suggestions));
+}
+
+export async function PUT(request: Request) {
+  const unauthorized = await requireAdmin(request);
+  if (unauthorized) return unauthorized;
+
+  const ai = (env as unknown as { AI?: AiBinding }).AI;
+  if (!ai) {
+    return Response.json({ error: "La lectura visual no está disponible. Ingresa el monto manualmente." }, { status: 503 });
+  }
+
+  const form = await request.formData();
+  const pages = form.getAll("pages").filter((value): value is File => value instanceof File);
+  const sourceNames = form.getAll("sourceNames").map(String);
+  if (!pages.length || pages.length > 12 || pages.some((page) => page.size > 4 * 1024 * 1024)) {
+    return Response.json({ error: "No fue posible preparar las páginas para la lectura visual." }, { status: 400 });
+  }
+
+  const grouped = new Map<string, Suggestion[]>();
+  for (let index = 0; index < pages.length; index += 1) {
+    const page = pages[index];
+    const sourceName = sourceNames[index] || page.name;
+    try {
+      const converted = await ai.toMarkdown({ name: page.name, blob: page }, {
+        conversionOptions: { output: { format: "text" } },
+      });
+      const result = Array.isArray(converted) ? converted[0] : converted;
+      const detected = result?.format === "error" ? null : detectPayableAmount(result?.data ?? "");
+      const entries = grouped.get(sourceName) ?? [];
+      entries.push({
+        fileName: sourceName,
+        amount: detected?.amount ?? null,
+        label: detected?.label ?? null,
+        confidence: detected?.confidence ?? "sin detectar",
+      });
+      grouped.set(sourceName, entries);
+    } catch {
+      const entries = grouped.get(sourceName) ?? [];
+      entries.push({ fileName: sourceName, amount: null, label: null, confidence: "sin detectar" });
+      grouped.set(sourceName, entries);
+    }
+  }
+
+  const suggestions = [...grouped.entries()].map(([fileName, entries]) => {
+    const detected = entries
+      .filter((entry): entry is Suggestion & { amount: number } => entry.amount !== null)
+      .sort((a, b) => confidenceScore(b.confidence) - confidenceScore(a.confidence) || b.amount - a.amount)[0];
+    return detected ?? { fileName, amount: null, label: null, confidence: "sin detectar" as const };
+  });
+  return Response.json(suggestionResponse(suggestions));
+}
+
+function confidenceScore(confidence: Suggestion["confidence"]) {
+  return confidence === "alta" ? 2 : confidence === "media" ? 1 : 0;
+}
+
+function suggestionResponse(suggestions: Suggestion[]) {
+  const detected = suggestions.filter((item): item is Suggestion & { amount: number } => item.amount !== null);
+  return {
     suggestions,
     total: detected.length === suggestions.length
       ? detected.reduce((sum, item) => sum + item.amount, 0)
       : null,
     detectedCount: detected.length,
     documentCount: suggestions.length,
-  });
+  };
 }
 
 function isSupported(document: DocumentRow) {
