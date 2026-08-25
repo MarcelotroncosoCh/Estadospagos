@@ -81,12 +81,9 @@ export function detectPayableAmount(text: string) {
   const candidates: Array<{ amount: number; label: string; score: number }> = [];
 
   lines.forEach((line, index) => {
-    if (/p\.?\s*unit|precio\s+unitario|descripci[oó]n/i.test(line) && /valor\s+total/i.test(line)) return;
     if (/subtotal|neto|iva|retenci[oó]n/i.test(line) && !/l[ií]quido|total\s+a\s+pagar/i.test(line)) return;
     for (const rule of rules) {
-      if (!rule.pattern.test(line)) continue;
-      const nearby = lines.slice(index, index + 5).join(" ");
-      for (const candidate of amountsFrom(nearby)) {
+      for (const candidate of amountsFollowingLabel(lines, index, rule.pattern)) {
         if (candidate.amount > 0 && candidate.amount < 10_000_000_000) {
           candidates.push({
             amount: candidate.amount,
@@ -95,22 +92,28 @@ export function detectPayableAmount(text: string) {
           });
         }
       }
-      break;
     }
   });
 
   candidates.sort((a, b) => b.score - a.score || b.amount - a.amount);
   const best = candidates[0];
-  if (best && best.score >= 70) {
-    return { amount: best.amount, label: best.label, confidence: best.score >= 105 ? "alta" as const : "media" as const };
-  }
-
   const netAmount = labeledAmount(lines, /\bneto\b/i);
   const vatAmount = labeledAmount(lines, /\biva\b/i);
   const exemptAmount = labeledAmount(lines, /\bexento\b/i);
-  if (netAmount !== null && vatAmount !== null) {
+  const componentTotal = netAmount !== null && vatAmount !== null
+    ? netAmount + vatAmount + (exemptAmount ?? 0)
+    : null;
+
+  if (best && best.score >= 70) {
+    if (componentTotal !== null && (best.amount > componentTotal * 1.25 || best.amount < componentTotal * 0.8)) {
+      return { amount: componentTotal, label: "NETO + IVA", confidence: "media" as const };
+    }
+    return { amount: best.amount, label: best.label, confidence: best.score >= 105 ? "alta" as const : "media" as const };
+  }
+
+  if (componentTotal !== null) {
     return {
-      amount: netAmount + vatAmount + (exemptAmount ?? 0),
+      amount: componentTotal,
       label: "NETO + IVA",
       confidence: "media" as const,
     };
@@ -123,8 +126,27 @@ export function detectPayableAmount(text: string) {
     : null;
 }
 
+function amountsFollowingLabel(lines: string[], lineIndex: number, label: RegExp) {
+  const line = lines[lineIndex];
+  const matches = [...line.matchAll(new RegExp(label.source, `${label.flags.replace("g", "")}g`))];
+  return matches.flatMap((match) => {
+    const start = (match.index ?? 0) + match[0].length;
+    const remainder = line.slice(start, start + 120);
+    const nextLabelIndex = remainder.search(/\b(?:subtotal|neto|exento|dsc?to\.?|descuento|iva|total|retenci[oó]n)\b/i);
+    const sameLine = amountsFrom(nextLabelIndex >= 0 ? remainder.slice(0, nextLabelIndex) : remainder);
+    if (sameLine.length) return [sameLine[0]];
+    if (nextLabelIndex >= 0) return [];
+    for (let nextIndex = lineIndex + 1; nextIndex < Math.min(lines.length, lineIndex + 4); nextIndex += 1) {
+      if (/\b(?:subtotal|neto|exento|dsc?to\.?|descuento|iva|total|retenci[oó]n)\b/i.test(lines[nextIndex])) return [];
+      const nextLine = amountsFrom(lines[nextIndex]);
+      if (nextLine.length) return [nextLine[0]];
+    }
+    return [];
+  });
+}
+
 function amountsFrom(value: string) {
-  const matches = value.match(/(?:CLP|\$)?\s*(?:\d{1,3}(?:[.,\s]\d{3})+|\d{4,})(?:[.,]\d{1,2})?/gi) ?? [];
+  const matches = value.match(/(?<!\d)(?:CLP|\$)?\s*(?:\d{1,3}(?:[.,\s]\d{3})+|\d{4,})(?:[.,]\d{1,2})?(?![\d.,])/gi) ?? [];
   return matches.map((match) => {
     const hasCurrency = /CLP|\$/i.test(match);
     const normalized = match.replace(/CLP|\$|\s/gi, "");
@@ -141,11 +163,8 @@ function amountsFrom(value: string) {
 
 function labeledAmount(lines: string[], label: RegExp) {
   for (let index = 0; index < lines.length; index += 1) {
-    if (!label.test(lines[index])) continue;
-    const candidates = amountsFrom(lines.slice(index, index + 3).join(" "))
-      .map((candidate) => candidate.amount)
-      .filter((amount) => amount > 0 && amount < 10_000_000_000);
-    if (candidates.length) return Math.max(...candidates);
+    const candidate = amountsFollowingLabel(lines, index, label)[0];
+    if (candidate && candidate.amount > 0 && candidate.amount < 10_000_000_000) return candidate.amount;
   }
   return null;
 }

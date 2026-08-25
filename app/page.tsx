@@ -554,7 +554,13 @@ export default function Home() {
     setAmountSuggestion(null);
     setPaidError("");
     if (payment.paidAmount || dataMode !== "live") return;
+    await detectPaymentAmount(payment);
+  }
+
+  async function detectPaymentAmount(payment: Payment) {
     setReadingAmount(true);
+    setAmountSuggestion(null);
+    setPaidError("");
     try {
       const response = await fetch(`/api/submissions/${encodeURIComponent(payment.id)}/amount-suggestion`, { method: "POST" });
       const result = await response.json() as AmountSuggestion & { error?: string };
@@ -1224,6 +1230,7 @@ export default function Home() {
           <span className="paid-modal-icon">$</span>
           <h2 id="paid-title">Revisar monto de {paidPayment.id}</h2>
           <p><strong>{paidPayment.provider}</strong> · {paidPayment.project}</p>
+          {!readingAmount && <button type="button" className="redetect-amount" onClick={() => void detectPaymentAmount(paidPayment)}>↻ Detectar nuevamente desde la factura</button>}
           {readingAmount && <div className="amount-reading"><span className="spinner" /> Leyendo el total a pagar de {paidPayment.files} documento{paidPayment.files === 1 ? "" : "s"}...</div>}
           {amountSuggestion && <div className="amount-suggestions">
             {amountSuggestion.suggestions.map((suggestion) => <div key={suggestion.fileName}>
