@@ -7,6 +7,7 @@ const departments = [
   "Arquitectura",
   "Gerencia de Proyectos",
   "Ingeniería",
+  "Instalaciones",
   "Oficina Técnica",
   "Presupuesto",
   "Topografía",
@@ -22,6 +23,7 @@ const requesters = [
   "Diego Diaz",
   "Jesus Sierra",
   "Leonardo Peña",
+  "Nicole Sepulveda",
 ];
 
 const baseProviders = [
