@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { after } from "next/server";
 import { requireAdmin } from "../../admin-auth";
 import {
   type AiBinding,
@@ -22,6 +23,7 @@ const MAX_FILE_SIZE = 15 * 1024 * 1024;
 const MAX_FILES = 20;
 const MAX_OCR_PAGES = 12;
 const MAX_OCR_PAGE_SIZE = 4 * 1024 * 1024;
+const AMOUNT_DETECTION_TIMEOUT_MS = 20_000;
 const SAFE_STORAGE_LIMIT = 8 * 1024 * 1024 * 1024;
 
 export async function GET(request: Request) {
@@ -94,7 +96,6 @@ export async function POST(request: Request) {
   }
 
   const id = `PG-${Date.now().toString(36).toUpperCase()}`;
-  const detectedAmount = await detectSubmissionAmount(files, ocrPages, ocrSourceNames);
   const uploadedKeys: string[] = [];
   const documentRows: Array<{ id: string; file: File; key: string }> = [];
 
@@ -129,7 +130,7 @@ export async function POST(request: Request) {
         project,
         motive,
         comment,
-        detectedAmount,
+        null,
       ),
       ...documentRows.map(({ id: documentId, file, key }) =>
         env.DB.prepare(`
@@ -142,11 +143,12 @@ export async function POST(request: Request) {
       catalogStatement("motive", motive, null),
     ];
     await env.DB.batch(statements);
+    after(() => updateDetectedAmount(id, files, ocrPages, ocrSourceNames));
     return Response.json({
       submission: {
         id,
         status: "Recibida",
-        paidAmount: detectedAmount,
+        paidAmount: null,
         waitingForPeriod,
         documents: documentRows.map((item) => ({
           id: item.id,
@@ -159,6 +161,35 @@ export async function POST(request: Request) {
     await Promise.all(uploadedKeys.map((key) => env.FILES.delete(key)));
     const message = error instanceof Error ? error.message : "No fue posible guardar la solicitud.";
     return Response.json({ error: message }, { status: 500 });
+  }
+}
+
+async function updateDetectedAmount(id: string, files: File[], pages: File[], sourceNames: string[]) {
+  try {
+    const detectedAmount = await withTimeout(
+      detectSubmissionAmount(files, pages, sourceNames),
+      AMOUNT_DETECTION_TIMEOUT_MS,
+    );
+    if (detectedAmount === null) return;
+    await env.DB.prepare(`
+      UPDATE submissions
+      SET paid_amount = ?
+      WHERE id = ? AND paid_amount IS NULL
+    `).bind(detectedAmount, id).run();
+  } catch (error) {
+    console.error("No fue posible detectar el monto después de guardar la factura.", error);
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

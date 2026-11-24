@@ -169,40 +169,6 @@ function canvasBlob(canvas: HTMLCanvasElement) {
   });
 }
 
-async function appendUploadOcrPages(form: FormData, files: File[]) {
-  const pdfFiles = files.filter((file) => file.type === "application/pdf" || /\.pdf$/i.test(file.name));
-  if (!pdfFiles.length) return;
-  const { getDocument, GlobalWorkerOptions } = await import("pdfjs-dist");
-  GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-  let preparedPages = 0;
-
-  for (const file of pdfFiles) {
-    if (preparedPages >= 12) break;
-    try {
-      const pdf = await getDocument({ data: await file.arrayBuffer() }).promise;
-      const pageCount = Math.min(pdf.numPages, 3, 12 - preparedPages);
-      for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
-        const page = await pdf.getPage(pageNumber);
-        const originalViewport = page.getViewport({ scale: 1 });
-        const scale = Math.min(2, 1600 / originalViewport.width);
-        const viewport = page.getViewport({ scale });
-        const canvas = documentCanvas(viewport.width, viewport.height);
-        const context = canvas.getContext("2d", { alpha: false });
-        if (!context) continue;
-        context.fillStyle = "#ffffff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        await page.render({ canvas, canvasContext: context, viewport }).promise;
-        form.append("ocrPages", await canvasBlob(canvas), `pagina-${preparedPages + 1}.jpg`);
-        form.append("ocrSourceNames", file.name);
-        preparedPages += 1;
-      }
-      await pdf.destroy();
-    } catch {
-      // The server will still try the PDF's embedded text when rendering is unavailable.
-    }
-  }
-}
-
 export default function Home() {
   const [view, setView] = useState<"form" | "status" | "admin" | "repository">("form");
   const [requester, setRequester] = useState("");
@@ -812,8 +778,6 @@ export default function Home() {
       formData.set("motive", cleanMotive);
       formData.set("comment", comment);
       files.forEach((file) => formData.append("files", file));
-      setSubmitStage("Leyendo montos...");
-      await appendUploadOcrPages(formData, files);
       setSubmitStage("Guardando facturas...");
       const response = await fetch("/api/submissions", { method: "POST", body: formData });
       const result = await response.json() as {
