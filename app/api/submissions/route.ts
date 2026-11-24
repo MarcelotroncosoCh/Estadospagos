@@ -12,6 +12,7 @@ const VALID_DEPARTMENTS = new Set([
   "Arquitectura",
   "Gerencia de Proyectos",
   "Ingeniería",
+  "Instalaciones",
   "Oficina Técnica",
   "Presupuesto",
   "Topografía",
